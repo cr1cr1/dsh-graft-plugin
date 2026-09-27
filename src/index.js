@@ -44,7 +44,7 @@
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { spawn } from 'node:child_process'
 import { access, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { createAutoSync } from './auto-sync.js'
 import { createGraftCommand } from './command.js'
@@ -70,6 +70,31 @@ export const inject = ['tools']
  */
 const CACHE_MS = 5000
 
+const readUtf8 = async (path) => {
+  try {
+    return await readFile(path, 'utf8')
+  } catch {
+    return undefined // missing, or a directory (a main checkout's .git)
+  }
+}
+
+/**
+ * The main checkout's root when `dir` is a linked git worktree, else undefined.
+ *
+ * Pure reads, no `git` child: in a worktree `.git` is a FILE pointing at the
+ * worktree's admin dir, whose `commondir` names the shared `.git`.
+ */
+async function linkedWorktreeMain(dir, readText = readUtf8) {
+  const dotGit = await readText(join(dir, '.git'))
+  if (typeof dotGit !== 'string') return undefined
+  const match = /^\s*gitdir:\s*(.+?)\s*$/m.exec(dotGit)
+  if (match === null) return undefined
+  const gitdir = resolve(dir, match[1])
+  const common = await readText(join(gitdir, 'commondir'))
+  if (typeof common !== 'string' || common.trim() === '') return undefined
+  return dirname(resolve(gitdir, common.trim()))
+}
+
 /**
  * The repository root graft would serve from `start`.
  *
@@ -78,11 +103,17 @@ const CACHE_MS = 5000
  * directory alone, because an empty `graft/` folder left behind by a removed
  * index would otherwise shadow a real one higher up.
  */
-export async function findGraftRoot(start, exists) {
+export async function findGraftRoot(start, exists, readText = readUtf8) {
   let dir = start
   for (;;) {
     for (const probe of ['.cache/stats.json', '.graph/wiring.json', 'INDEX.md']) {
       if (await exists(join(dir, 'graft', probe))) return dir
+    }
+    if (await exists(join(dir, '.git'))) {
+      // Repo boundary. A linked worktree owns its graph: answer only from it,
+      // never from the main checkout above — graft seeds a worktree's own
+      // first graph from there, and main-branch paths are wrong for this one.
+      if ((await linkedWorktreeMain(dir, readText)) !== undefined) return undefined
     }
     const parent = dirname(dir)
     // `dirname` of a filesystem root returns the root itself; that fixed point
@@ -267,20 +298,22 @@ export function totalSaved(graftOwn, ours) {
  * disagree about the same repo.
  */
 export async function computeStatus(root, io) {
+  const worktreeOf = await linkedWorktreeMain(root, io.readText ?? readUtf8)
   const stats = await io.readJson(join(root, 'graft', '.cache', 'stats.json'))
   const base = stats !== undefined && typeof stats.nodeCount === 'number' && stats.nodeCount > 0
     ? { nodeCount: stats.nodeCount, edgeCount: stats.edgeCount ?? 0, freshness: freshnessOf(stats), syncedAt: stats.syncedAt ?? null }
     : undefined
 
   if (base !== undefined) {
-    return { ...base, root, savedTokens: totalSaved(await io.readSavedTokens(root), io.ourSavings?.(root)), source: 'cache' }
+    return { ...base, root, worktreeOf, savedTokens: totalSaved(await io.readSavedTokens(root), io.ourSavings?.(root)), source: 'cache' }
   }
 
   const counted = countWiring(await io.readJson(join(root, 'graft', '.graph', 'wiring.json')))
-  if (counted === undefined) return { root, ok: false, reason: 'no graph' }
+  if (counted === undefined) return { root, ok: false, reason: 'no graph', worktreeOf }
   return {
     ...counted,
     root,
+    worktreeOf,
     // The graph carries no drift signal of its own, so this reads as synced
     // until something repopulates the cache — the same concession graft's
     // statusline documents for this exact fallback.
@@ -452,6 +485,7 @@ export function apply(ctx, config = {}) {
   const io = {
     readJson,
     readSavedTokens,
+    readText: readUtf8,
     ourSavings: (root) => savings.get(root) ?? 0,
     exists: async (path) => {
       try {
@@ -510,7 +544,7 @@ export function apply(ctx, config = {}) {
       const from = cwdFor(sessionId)
       let root
       try {
-        root = await findGraftRoot(from, io.exists)
+        root = await findGraftRoot(from, io.exists, io.readText)
       } catch (error) {
         return { ok: false, reason: String(error?.message ?? error), from }
       }
@@ -533,7 +567,7 @@ export function apply(ctx, config = {}) {
 
     viz: async (sessionId) => {
       const from = cwdFor(sessionId)
-      const root = await findGraftRoot(from, io.exists)
+      const root = await findGraftRoot(from, io.exists, io.readText)
       if (root === undefined) return { ok: false, reason: 'no graft index above ' + from, from }
 
       // Already serving this repo: reuse it. Checked before the pending map so
@@ -577,7 +611,7 @@ export function apply(ctx, config = {}) {
   if (config.tools !== false) {
     const toolDeps = {
       fallbackCwd: fallbackFrom,
-      findRoot: (start) => findGraftRoot(start, io.exists),
+      findRoot: (start) => findGraftRoot(start, io.exists, io.readText),
       recordSavings: (root, saved) => {
         savings.set(root, (savings.get(root) ?? 0) + saved)
         savingsDirty = true
@@ -603,7 +637,7 @@ export function apply(ctx, config = {}) {
           scope.commands.register(
             createGraftCommand({
               fallbackCwd: fallbackFrom,
-              findRoot: (start) => findGraftRoot(start, io.exists),
+              findRoot: (start) => findGraftRoot(start, io.exists, io.readText),
               readJson,
               countWiring,
             }),
@@ -681,7 +715,7 @@ export function apply(ctx, config = {}) {
         // Going via the sessions registry would be a lookup to reach a value
         // already in hand, and would differ if the two ever disagreed.
         const from = exec?.agent?.session?.header?.cwd ?? fallbackFrom
-        const root = await findGraftRoot(from, io.exists)
+        const root = await findGraftRoot(from, io.exists, io.readText)
         if (root !== undefined) {
           // A rejected promise here would be unhandled — fatal to dsh.
           void autoSync.markDirty(root).catch(() => {})
@@ -694,7 +728,7 @@ export function apply(ctx, config = {}) {
 
     ctx.on('agent/turn-stopping', async (payload) => {
       const cwd = payload?.agent?.session?.header?.cwd ?? fallbackFrom
-      const root = await findGraftRoot(cwd, io.exists)
+      const root = await findGraftRoot(cwd, io.exists, io.readText)
       if (root === undefined) return
       const outcome = await autoSync.syncIfDirty(root)
       if (outcome === 'started') {

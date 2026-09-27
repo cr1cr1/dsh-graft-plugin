@@ -113,6 +113,44 @@ check('and a space in the path does not break it', OTHER.includes(' '))
 const nowhere = await findGraftRoot(BARE, exists)
 check('an unindexed tree resolves to nothing', nowhere === undefined, String(nowhere))
 
+console.log('\n--- git worktrees are their own graft root ---')
+// A linked worktree's .git is a FILE pointing at its admin dir, whose
+// commondir names the shared .git. The one that matters is NESTED inside the
+// main checkout: without the boundary, resolution walked straight past it and
+// the tools answered from the main checkout's graph — wrong paths for this
+// branch's files.
+await mkdir(join(REPO, '.git'), { recursive: true })
+const wt = join(REPO, 'wt')
+const gitDir = join(fixture, 'main.git', 'worktrees', 'wt')
+await mkdir(join(wt, 'src'), { recursive: true })
+await mkdir(gitDir, { recursive: true })
+await writeFile(join(wt, '.git'), `gitdir: ${gitDir}\n`, 'utf8')
+await writeFile(join(gitDir, 'commondir'), '../..\n', 'utf8')
+
+const fromWt = await findGraftRoot(join(wt, 'src'), exists)
+check('a nested worktree never answers from the main graph above it', fromWt === undefined, String(fromWt))
+
+const mainAgain = await findGraftRoot(REPO, exists)
+check('the main checkout itself still resolves', samePath(mainAgain, REPO), String(mainAgain))
+
+const mainStatus = await computeStatus(REPO, io)
+check('a main checkout is not reported as a worktree', mainStatus.worktreeOf === undefined, String(mainStatus.worktreeOf))
+
+// Once the worktree has its own index (graft seeds it from main on build),
+// resolution stays inside the worktree and the status names its repo.
+await mkdir(join(wt, 'graft', '.cache'), { recursive: true })
+await writeFile(join(wt, 'graft', 'INDEX.md'), '# graft repo map\n')
+await writeFile(
+  join(wt, 'graft', '.cache', 'stats.json'),
+  JSON.stringify({ nodeCount: 12, edgeCount: 7, dirty: false, staleCount: 0, syncedAt: '2026-09-11T09:00:00.000Z' }),
+)
+const wtIndexed = await findGraftRoot(join(wt, 'src'), exists)
+check('a worktree with its own index resolves to itself', samePath(wtIndexed, wt), String(wtIndexed))
+
+const wtStatus = await computeStatus(wt, io)
+check('status names the main checkout the worktree belongs to', samePath(wtStatus.worktreeOf, fixture), String(wtStatus.worktreeOf))
+check('and still serves the worktree graph', wtStatus.nodeCount === 12, String(wtStatus.nodeCount))
+
 console.log('\n--- status from the cache ---')
 const status = await computeStatus(REPO, io)
 check('reports the cache node count', status.nodeCount === 1284, String(status.nodeCount))
@@ -255,6 +293,8 @@ check('the type and its body register under the same id', clientSource.includes(
 check('that dependency is soft too', clientSource.includes('ctx.inject(["sidebarRightTabs", "slots"]') && !/const inject = [[]/.test('') && clientSource.indexOf('const inject = ["slots", "remote"]') !== -1)
 check('the body reads the session from either host', clientSource.includes('props?.sessionId ?? props?.scope?.sessionId'))
 check('the browser tab survives only as the last resort', clientSource.includes('neither sidebar'))
+// The viz panel bar shows which checkout a worktree graph belongs to.
+check('the viz panel names the worktree when the graph serves one', clientSource.includes('"worktree of " + wt') && clientSource.includes('status.worktreeOf'))
 
 await rm(fixture, { recursive: true, force: true })
 
