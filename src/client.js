@@ -50,7 +50,10 @@ window.__ModuleLoader__.load({
     function identity(value) {
       return value;
     }
-    const CODEC = { mode: "strict", typeSymbol: "graft-status/json", schema: { parse: identity } };
+    // dsh 0.1.7 strict codecs require a create() factory returning the schema;
+    // the old schema:{parse} shape is refused at $mount and the client entry
+    // fails to activate. Payloads are plain JSON, so parse is identity.
+    const CODEC = { mode: "strict", typeSymbol: "graft-status/json", create: () => ({ parse: identity }) };
     const descriptor = (method, names) => ({
       id: "graft-status#graftStatus/" + method,
       service: "graftStatus",
@@ -58,7 +61,7 @@ window.__ModuleLoader__.load({
       method,
       invocation: { kind: "direct" },
       parameters: names.map((name) => ({ name, wire: name, source: "json", codec: CODEC })),
-      result: { mode: "strict", typeSymbol: "graft-status/json", schema: { parse: identity } },
+      result: { mode: "strict", typeSymbol: "graft-status/json", create: () => ({ parse: identity }) },
       sourceLocation: { file: "graft-status/client.js", line: 1, column: 1 },
     });
     const CONTRIBUTION = {

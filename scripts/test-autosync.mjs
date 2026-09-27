@@ -1,4 +1,5 @@
-import { savedTokensIn } from '../src/graft-tools.js'
+import { join } from 'node:path'
+import { resolveGraftCommand, savedTokensIn } from '../src/graft-tools.js'
 import { createAutoSync } from '../src/auto-sync.js'
 import { totalSaved } from '../src/index.js'
 
@@ -112,6 +113,54 @@ const off = createAutoSync({ graft: { state, syncRun: 'x' }, now: () => now, spa
 let armed = true
 try { await off.markDirty('C:/y') } catch { armed = false }
 check('debounceMs 0 restores turn-end-only', armed === true)
+
+console.log('\n--- a graft cli we cannot locate must never crash dsh ---')
+// THE ORIGINAL FATALITY: graft installed as a bare shim (bun global) left
+// `cliPath` undefined, `dirname(undefined)` in loadGraftState escaped the
+// `void`-ed markDirty as an unhandled rejection, and dsh died on the FIRST
+// successful edit in an indexed repo. These checks pin the guarantee: no
+// input, no throw, no rejection, no spawn.
+const noCli = createAutoSync({ now: () => now, spawn: (...a) => { spawned.push(a); return { on() {}, unref() {} } }, debounceMs: 0 })
+let crashed = false
+const spawnedBefore = spawned.length
+try { await noCli.markDirty('C:/no-cli') } catch { crashed = true }
+check('markDirty resolves without a cli', crashed === false)
+check('and never spawns a rebuild', spawned.length === spawnedBefore, String(spawned.length - spawnedBefore))
+check('syncIfDirty reports graft unavailable', (await noCli.syncIfDirty('C:/no-cli')) === 'graft-unavailable')
+
+// Even a loader that REJECTS is swallowed — graft() awaits the injected stub
+// inside its own try, so no input shape can turn into an unhandled rejection.
+const throwing = createAutoSync({ graft: Promise.reject(new Error('boom')), now: () => now, spawn: () => ({ on() {}, unref() {} }), debounceMs: 0 })
+crashed = false
+try { await throwing.markDirty('C:/throwing') } catch { crashed = true }
+check('a rejecting graft loader is swallowed', crashed === false)
+check('and sync stays unavailable, not fatal', (await throwing.syncIfDirty('C:/throwing')) === 'graft-unavailable')
+
+console.log('\n--- resolveGraftCommand finds graft however it was installed ---')
+const fakeExists = (set) => (p) => set.has(p)
+const bunCli = '/home/x/.bun/install/global/node_modules/@nanonets/graft/dist/cli.js'
+// A bun global install: only the shim is on PATH, the package lives under
+// $BUN_INSTALL/install/global. The PATH-only scan returned prefix: [] here,
+// which is what fed undefined into loadGraftState above.
+const viaBunInstall = resolveGraftCommand(
+  { PATH: '/home/x/.bun/bin', BUN_INSTALL: '/home/x/.bun', HOME: '/home/x' },
+  fakeExists(new Set([bunCli])),
+)
+check('a bun global install resolves to its dist cli', viaBunInstall.prefix[0] === bunCli && viaBunInstall.shell === false, viaBunInstall.prefix[0])
+const viaHome = resolveGraftCommand(
+  { PATH: '', HOME: '/home/x' },
+  fakeExists(new Set([bunCli])),
+)
+check('or via HOME/.bun when BUN_INSTALL is unset', viaHome.prefix[0] === bunCli, viaHome.prefix[0])
+const viaUserprofile = resolveGraftCommand(
+  { PATH: '', USERPROFILE: 'C:\\Users\\x' },
+  // The fixture path is built with the same join() the source uses, so this
+  // checks WHERE the lookup happens, not how a host renders separators.
+  fakeExists(new Set([join('C:\\Users\\x', '.bun', 'install', 'global', 'node_modules', '@nanonets', 'graft', 'dist', 'cli.js')])),
+)
+check('or via USERPROFILE/.bun on Windows', viaUserprofile.prefix[0] === join('C:\\Users\\x', '.bun', 'install', 'global', 'node_modules', '@nanonets', 'graft', 'dist', 'cli.js'), viaUserprofile.prefix[0])
+const bare = resolveGraftCommand({ PATH: '', HOME: '/home/x' }, fakeExists(new Set()))
+check('nothing installed falls back to the bare command', bare.command === 'graft' && bare.prefix.length === 0)
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exit(failures === 0 ? 0 : 1)

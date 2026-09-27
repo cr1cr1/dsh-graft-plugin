@@ -71,6 +71,10 @@ const DEFAULT_WRITE_TOOLS = ['write', 'edit', 'str_replace_editor', 'pwsh', 'bas
 
 /** Graft's own state helpers, loaded from wherever graft is installed. */
 async function loadGraftState(cliPath) {
+  // A cli we cannot locate (bare shim on PATH) must degrade to "unavailable",
+  // never throw: this runs inside fire-and-forget middleware and a rejection
+  // here is fatal to dsh.
+  if (typeof cliPath !== 'string' || cliPath === '') return undefined
   const claudeDir = join(dirname(cliPath), 'claude')
   const statePath = join(claudeDir, 'state.js')
   const syncRun = join(claudeDir, 'sync-run.js')
@@ -132,7 +136,11 @@ export function createAutoSync(deps = {}) {
   let loaded
   const graft = async () => {
     if (loaded === undefined) {
-      loaded = deps.graft !== undefined ? deps.graft : await loadGraftState(deps.cliPath)
+      try {
+        loaded = deps.graft !== undefined ? await deps.graft : await loadGraftState(deps.cliPath)
+      } catch {
+        loaded = null // any loader failure counts as "graft unavailable"
+      }
       if (loaded === undefined) loaded = null
     }
     return loaded
@@ -161,7 +169,7 @@ export function createAutoSync(deps = {}) {
           root,
           setTimer(() => {
             timers.delete(root)
-            void api.syncIfDirty(root)
+            void api.syncIfDirty(root).catch(() => {})
           }, debounceMs),
         )
       }

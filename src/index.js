@@ -616,28 +616,52 @@ export function apply(ctx, config = {}) {
   // The standing instruction, registered on each agent's OWN context so no
   // preset can shadow it (see GRAFT_GUIDANCE for why the persona could not).
   if (config.promptSection !== false) {
-    /** Agent contexts already carrying the section; a duplicate name throws. */
-    const briefed = new WeakSet()
+    /** Agent contexts already carrying the section -> the registering fiber. */
+    const briefed = new WeakMap()
 
-    ctx.on('agent/session-start', (payload) => {
-      const agentCtx = payload?.agent?.ctx
+    const installGuidance = (agent) => {
+      const agentCtx = agent?.ctx
       if (agentCtx === undefined || agentCtx === null || briefed.has(agentCtx)) return
-      briefed.add(agentCtx)
       try {
-        // `get` rather than `agentCtx.systemPrompt`: the property accessor
-        // throws without a declared inject, and this plugin declares none for
-        // it on purpose — a deployment without the service should lose the
-        // sentence, not the chip and the tools.
-        const prompt = agentCtx.get?.('systemPrompt')
-        if (typeof prompt?.section !== 'function') return
-        agentCtx.effect?.(
-          () => prompt.section({ name: 'graft-status:usage', order: GUIDANCE_ORDER, text: GRAFT_GUIDANCE }),
-          'graft-status: prompt guidance',
-        )
+        // dsh 0.1.7 removed the old session-start event; `agent/created` is
+        // the seam its own plugins use. `inject` rather than `agentCtx.get`:
+        // an agent scope without the prompt registry never calls this back —
+        // it loses the sentence, not the session.
+        const fiber = agentCtx.inject?.(['systemPrompt'], (scope) => {
+          try {
+            scope.systemPrompt?.section?.({
+              name: 'graft-status:usage',
+              order: GUIDANCE_ORDER,
+              text: GRAFT_GUIDANCE,
+            })
+          } catch {
+            // Already registered (e.g. after a plugin reload).
+          }
+        })
+        if (fiber !== undefined) briefed.set(agentCtx, fiber)
       } catch {
         // A section that fails to register costs a nudge, never the session.
       }
+    }
+
+    const uninstallGuidance = (agent) => {
+      const agentCtx = agent?.ctx
+      const fiber = agentCtx === undefined || agentCtx === null ? undefined : briefed.get(agentCtx)
+      if (fiber === undefined) return
+      briefed.delete(agentCtx)
+      try {
+        void fiber.dispose?.()
+      } catch {
+        // Teardown must not throw.
+      }
+    }
+
+    // Agents that already exist when this row mounts (plugin reload).
+    ctx.inject?.(['agents'], (scope) => {
+      for (const agent of scope.agents?.list?.() ?? []) installGuidance(agent)
     })
+    ctx.on('agent/created', ({ agent }) => installGuidance(agent))
+    ctx.on('agent/disposed', ({ agent }) => uninstallGuidance(agent))
   }
 
   // Auto-rebuild: graft's two Claude Code hooks, on dsh's own seams.
@@ -658,7 +682,10 @@ export function apply(ctx, config = {}) {
         // already in hand, and would differ if the two ever disagreed.
         const from = exec?.agent?.session?.header?.cwd ?? fallbackFrom
         const root = await findGraftRoot(from, io.exists)
-        if (root !== undefined) void autoSync.markDirty(root)
+        if (root !== undefined) {
+          // A rejected promise here would be unhandled — fatal to dsh.
+          void autoSync.markDirty(root).catch(() => {})
+        }
       }
       return result
     })
