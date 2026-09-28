@@ -357,7 +357,8 @@ check('a fresh pulse blinks, on and off, not solid', /for \(const ms of \[0, 175
 // once as a dot stuck purple after every blink. An even count ends off.
 const marks = clientSource.match(/for \(const ms of \[((?:\d+)(?:, \d+)*)\]\)/)?.[1]?.split(', ').map(Number) ?? []
 check('the blink ends off, back at the resting colour', marks.length > 0 && marks.length % 2 === 0, JSON.stringify(marks))
-check('polling speeds up while the dot is flicking', clientSource.includes('settled && !flick ? 15000 : 2000'))
+check('polling speeds up while graft tools are active', clientSource.includes('settled && !recent ? 4000 : 2000'))
+check('a pulse keeps the fast poll for a tail, not just the blink', clientSource.includes('window.setTimeout(() => setRecent(false), 20000)'))
 check('the flicker timers are cleaned up on unmount', clientSource.includes('for (const t of flickTimers.current) window.clearTimeout(t)'))
 
 await rm(fixture, { recursive: true, force: true })

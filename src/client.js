@@ -522,9 +522,16 @@ window.__ModuleLoader__.load({
         const dwell = React.useRef(null);
         const wrap = React.useRef(null);
 
-        // Whether the dot should be blinking blue right now: a graft tool call
+        // Whether the dot should be blinking violet right now: a graft tool call
         // was seen and its blink window has not run out yet.
         const [flick, setFlick] = React.useState(false);
+        // Whether a graft tool was seen recently. Outlives the blink on
+        // purpose: it holds the fast poll for a tail after the last pulse, so
+        // the NEXT call in an active burst is caught within one fast tick
+        // instead of waiting out the slow settled cadence — exactly the lag a
+        // second tool call used to show.
+        const [recent, setRecent] = React.useState(false);
+        const recentTimer = React.useRef(null);
         // The last pulse consumed, as { root, count }: the blink fires when the
         // count MOVES for the repo this chip describes, never on first sight.
         const pulseSeen = React.useRef(null);
@@ -590,8 +597,10 @@ window.__ModuleLoader__.load({
           () => () => {
             for (const t of flickTimers.current) window.clearTimeout(t);
             flickTimers.current = [];
+            window.clearTimeout(recentTimer.current);
             pulseSeen.current = null;
             setFlick(false);
+            setRecent(false);
           },
           [sessionId],
         );
@@ -626,6 +635,12 @@ window.__ModuleLoader__.load({
             if (count > seen.count) {
               pulseSeen.current = { root: next.root, count };
               blink();
+              // Hold the fast poll for a tail after the last use, so the next
+              // call in a burst is seen within one tick of the harness's own
+              // tool feedback.
+              setRecent(true);
+              window.clearTimeout(recentTimer.current);
+              recentTimer.current = window.setTimeout(() => setRecent(false), 20000);
             }
           },
           [blink],
@@ -658,19 +673,21 @@ window.__ModuleLoader__.load({
           // near zero and the chip appeared to jump straight from stale back
           // to green. While the graph is MOVING — stale, mid-sync, or not yet
           // known — it is watched closely; once it is in sync there is nothing
-          // to watch and the slow interval is right again.
-          const timer = window.setInterval(pull, settled && !flick ? 15000 : 2000);
+          // to watch. Even at rest it still polls at 4s rather than the old
+          // 15s, because graft tool feedback must keep up with the harness's
+          // own tool feedback — a settled chip that only looked twice a minute
+          // was the reported lag on every call after the first. The server
+          // caches status for 5s, so 4s adds no real reads; a pulse then holds
+          // the 2s cadence for a 20s tail.
+          const timer = window.setInterval(pull, settled && !recent ? 4000 : 2000);
           return () => {
             live = false;
             window.clearInterval(timer);
           };
           // `settled` is a dependency, not just a value read inside: without it
           // the interval would keep whatever cadence it had at mount — 2s, from
-          // the initial unknown state — and never slow down again. `flick` for
-          // the same reason: while graft tools are running, the fast cadence is
-          // what lets consecutive calls read as one continuous blink instead of
-          // one blink per fifteen seconds.
-        }, [sessionId, settled, flick, pulseCheck]);
+          // the initial unknown state — and never slow down again.
+        }, [sessionId, settled, recent, pulseCheck]);
 
         const openViz = React.useCallback(() => {
           const repo = basename((status && status.root) || "");
