@@ -197,6 +197,9 @@ function graftTool(spec, deps) {
             'Run `graft build` in it once — it needs no API key — and this tool will work from then on.',
         }
       }
+      // Announced BEFORE the run, so the chip's dot flickers while graft is
+      // actually working, not only after it has answered.
+      deps.noteUse?.(found)
       const result = await runGraft([...spec.argv(args), found], found, deps)
       const saved = savedTokensIn(result.text)
       if (saved > 0) deps.recordSavings?.(found, saved)

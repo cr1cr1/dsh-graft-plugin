@@ -14,7 +14,8 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { computeStatus, countWiring, findGraftRoot, freshnessOf } from '../src/index.js'
+import { computeStatus, countWiring, createToolPulse, findGraftRoot, freshnessOf } from '../src/index.js'
+import { graftTools } from '../src/graft-tools.js'
 
 let failures = 0
 const check = (label, ok, extra = '') => {
@@ -238,6 +239,53 @@ const cannotSpawn = await startViz('C:/x', 4400, {
 check('an unspawnable graft is a reason, not a throw', cannotSpawn.ok === false && /not on PATH/.test(cannotSpawn.reason))
 
 /* ========================================================================== *
+ * Tool-use pulses: any graft_* call must reach the chip's dot
+ * ========================================================================== */
+
+console.log('\n--- tool use is recorded against its repo ---')
+const pulse = createToolPulse()
+check('an unused repo has no pulse', pulse.get(REPO) === undefined)
+pulse.note(REPO)
+const first = pulse.get(REPO)
+pulse.note(REPO)
+const second = pulse.get(REPO)
+check('repeated uses count up per root', first.count === 1 && second.count === 2, JSON.stringify(first) + ' vs ' + JSON.stringify(second))
+check('the pulse carries when it last happened', typeof first.at === 'number' && second.at >= first.at)
+check('another repo pulses independently', pulse.get(OTHER) === undefined)
+pulse.note('')
+check('an empty root is ignored', pulse.get('') === undefined)
+
+console.log('\n--- every graft tool announces its own use ---')
+const pulsed = []
+const spawnedArgv = []
+const fakeSpawn = (command, argv) => {
+  spawnedArgv.push([command, argv])
+  return {
+    stdout: { on() {} },
+    stderr: { on() {} },
+    on(event, fn) { if (event === 'close') fn() },
+    kill() {},
+  }
+}
+const pulseTools = graftTools({
+  fallbackCwd: BARE,
+  // BARE has no index: the no-graph branch. Everything else resolves to REPO.
+  findRoot: async (start) => (start === BARE ? undefined : REPO),
+  noteUse: (root) => pulsed.push(root),
+  command: { command: 'graft-fake', prefix: [], shell: false },
+  spawn: fakeSpawn,
+})
+const ask = pulseTools.find((t) => t.name === 'graft_ask')
+const answered = await ask.execute({ query: 'anything' }, { agent: { session: { header: { cwd: OTHER } } } })
+check('the call still answers', typeof answered.text === 'string' && answered.text !== '', answered.text.slice(0, 60))
+check('rooted at the session repo, not the process cwd', samePath(spawnedArgv[0]?.[1]?.at(-1), REPO), String(spawnedArgv[0]?.[1]?.at(-1)))
+check('one call, one pulse, for the right root', pulsed.length === 1 && samePath(pulsed[0], REPO), JSON.stringify(pulsed))
+
+const noGraph = await ask.execute({ query: 'anything' }, { agent: { session: { header: { cwd: BARE } } } })
+check('a workspace with no graph explains itself', /No graft index/.test(noGraph.text))
+check('and does not pulse — there is no green dot to light', pulsed.length === 1, JSON.stringify(pulsed))
+
+/* ========================================================================== *
  * The new-tab handle (a source-level guard)
  * ========================================================================== */
 
@@ -295,6 +343,18 @@ check('the body reads the session from either host', clientSource.includes('prop
 check('the browser tab survives only as the last resort', clientSource.includes('neither sidebar'))
 // The viz panel bar shows which checkout a worktree graph belongs to.
 check('the viz panel names the worktree when the graph serves one', clientSource.includes('"worktree of " + wt') && clientSource.includes('status.worktreeOf'))
+
+console.log('\n--- the dot flickers blue while a graft tool runs ---')
+// The pulse rides the status poll, so it must bypass the five-second status
+// cache: a blink that waited out `cacheMs` would land after the call ended.
+const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8')
+check('the status payload carries the pulse', /toolUse: pulses\.get\(root\)/.test(indexSource))
+check('on the cache-hit path too', (indexSource.match(/toolUse: pulses\.get\(root\)/g) ?? []).length === 2)
+check('the flicker style exists and sits on the dot', clientSource.includes('.gs-chip.gs-live .gs-dot{color:var(--dsw-alias-state-business-primary'))
+check('the client counts incoming pulses', clientSource.includes('toolUse?.count'))
+check('a fresh pulse blinks, on and off, not solid', /for \(const ms of \[0, 350, 700, 1050, 1400, 1750\]\)/.test(clientSource))
+check('polling speeds up while the dot is flicking', clientSource.includes('settled && !flick ? 15000 : 2000'))
+check('the flicker timers are cleaned up on unmount', clientSource.includes('for (const t of flickTimers.current) window.clearTimeout(t)'))
 
 await rm(fixture, { recursive: true, force: true })
 

@@ -289,6 +289,30 @@ export function totalSaved(graftOwn, ours) {
 }
 
 /**
+ * Per-root tally of graft tool calls, for the chip's blue flicker.
+ *
+ * Every graft_* execute() notes its root here, and the next status poll for
+ * that repo carries the count; the client flickers the dot when it moves. The
+ * tally lives OUTSIDE the status cache on purpose: a pulse that waited out
+ * `cacheMs` would blink long after the tool call it describes had finished.
+ */
+export function createToolPulse() {
+  const counts = new Map()
+  return {
+    /** The model invoked a graft tool whose graph lives at `root`. */
+    note(root) {
+      if (typeof root !== 'string' || root === '') return
+      const hit = counts.get(root)
+      counts.set(root, { count: (hit?.count ?? 0) + 1, at: Date.now() })
+    },
+    /** undefined until the first use: no pulse, no flicker, no field. */
+    get(root) {
+      return counts.get(root)
+    },
+  }
+}
+
+/**
  * The whole status for one repo root.
  *
  * The cache is preferred over the graph because only the cache carries live
@@ -456,6 +480,9 @@ export function apply(ctx, config = {}) {
   let savingsLoaded = false
   let savingsDirty = false
 
+  /** Per-root graft tool-use pulses; the chip's dot blinks blue when one moves. */
+  const pulses = createToolPulse()
+
   const loadSavings = async () => {
     if (savingsLoaded) return
     savingsLoaded = true
@@ -552,7 +579,9 @@ export function apply(ctx, config = {}) {
 
       const now = Date.now()
       const hit = cache.get(root)
-      if (hit !== undefined && now - hit.at < cacheMs) return hit.value
+      // The pulse rides ALONGSIDE the cached body, outside it: a blink that
+      // waited out cacheMs would land after the tool call had already ended.
+      if (hit !== undefined && now - hit.at < cacheMs) return { ...hit.value, toolUse: pulses.get(root) }
 
       let value
       try {
@@ -562,7 +591,7 @@ export function apply(ctx, config = {}) {
         value = { ok: false, reason: String(error?.message ?? error), from }
       }
       cache.set(root, { value, at: now })
-      return value
+      return { ...value, toolUse: pulses.get(root) }
     },
 
     viz: async (sessionId) => {
@@ -612,6 +641,7 @@ export function apply(ctx, config = {}) {
     const toolDeps = {
       fallbackCwd: fallbackFrom,
       findRoot: (start) => findGraftRoot(start, io.exists, io.readText),
+      noteUse: (root) => pulses.note(root),
       recordSavings: (root, saved) => {
         savings.set(root, (savings.get(root) ?? 0) + saved)
         savingsDirty = true

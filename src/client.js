@@ -137,6 +137,11 @@ window.__ModuleLoader__.load({
         "@keyframes gs-breathe{0%,100%{opacity:1}50%{opacity:.62}}",
         "@media (prefers-reduced-motion:reduce){.gs-busy .gs-dot{animation:none}.gs-chip.gs-busy{animation:none}}",
         ".gs-idle .gs-dot{color:var(--dsw-alias-label-tertiary,#888)}",
+        // A graft tool is running: the dot blinks this blue, on and off. The
+        // blinking itself is JS toggling `gs-live`; this only paints it, and
+        // reuses the blue the busy state already claims so the chip speaks
+        // one dialect of "working".
+        ".gs-chip.gs-live .gs-dot{color:var(--dsw-alias-state-business-primary,#4b8bd6)}",
         ".gs-chip.gs-muted{opacity:.6}",
         ".gs-chip.gs-clickable{cursor:pointer}",
         ".gs-chip.gs-clickable:hover{border-color:var(--dsw-alias-border-l3,rgba(128,128,128,.5))}",
@@ -516,6 +521,14 @@ window.__ModuleLoader__.load({
         const dwell = React.useRef(null);
         const wrap = React.useRef(null);
 
+        // Whether the dot should be blinking blue right now: a graft tool call
+        // was seen and its blink window has not run out yet.
+        const [flick, setFlick] = React.useState(false);
+        // The last pulse consumed, as { root, count }: the blink fires when the
+        // count MOVES for the repo this chip describes, never on first sight.
+        const pulseSeen = React.useRef(null);
+        const flickTimers = React.useRef([]);
+
         // Whether the graph is at rest. Drives the poll cadence below.
         const settled = status !== null && status.ok === true && status.freshness === "synced";
 
@@ -569,6 +582,50 @@ window.__ModuleLoader__.load({
         // component; one that fires after the session switched would show the
         // previous workspace's card.
         React.useEffect(() => () => window.clearTimeout(dwell.current), []);
+        // The blink must not cross a session boundary — this component stays
+        // mounted across one — and its timers must not outlive it. Effect
+        // cleanup runs for both, so this one block is the whole hygiene.
+        React.useEffect(
+          () => () => {
+            for (const t of flickTimers.current) window.clearTimeout(t);
+            flickTimers.current = [];
+            pulseSeen.current = null;
+            setFlick(false);
+          },
+          [sessionId],
+        );
+
+        // Blink the dot blue on and off — intermittent, never solid — for just
+        // under two seconds. A pulse arriving mid-blink restarts the run, so a
+        // burst of graft calls reads as one flicker that ends when they do.
+        const blink = React.useCallback(() => {
+          for (const t of flickTimers.current) window.clearTimeout(t);
+          flickTimers.current = [];
+          for (const ms of [0, 350, 700, 1050, 1400, 1750]) {
+            const on = flickTimers.current.length % 2 === 0;
+            flickTimers.current.push(window.setTimeout(() => setFlick(on), ms));
+          }
+        }, []);
+
+        // Consume one polled status: blink when its tool-use count has moved
+        // for THIS repo. A first look — or the first look after the chip
+        // switched repos — only sets the baseline, so history never blinks.
+        const pulseCheck = React.useCallback(
+          (next) => {
+            const count = next?.toolUse?.count;
+            if (typeof count !== "number") return;
+            const seen = pulseSeen.current;
+            if (seen === null || seen.root !== next.root) {
+              pulseSeen.current = { root: next.root, count };
+              return;
+            }
+            if (count > seen.count) {
+              pulseSeen.current = { root: next.root, count };
+              blink();
+            }
+          },
+          [blink],
+        );
 
         React.useEffect(() => {
           let live = true;
@@ -580,7 +637,10 @@ window.__ModuleLoader__.load({
             }
             Promise.resolve(service.status(sessionId)).then(
               (answer) => {
-                if (live) setStatus(unwrap(answer));
+                if (!live) return;
+                const next = unwrap(answer);
+                setStatus(next);
+                pulseCheck(next);
               },
               (error) => {
                 if (live) setStatus({ ok: false, reason: String(error?.message ?? error) });
@@ -595,15 +655,18 @@ window.__ModuleLoader__.load({
           // to green. While the graph is MOVING — stale, mid-sync, or not yet
           // known — it is watched closely; once it is in sync there is nothing
           // to watch and the slow interval is right again.
-          const timer = window.setInterval(pull, settled ? 15000 : 2000);
+          const timer = window.setInterval(pull, settled && !flick ? 15000 : 2000);
           return () => {
             live = false;
             window.clearInterval(timer);
           };
           // `settled` is a dependency, not just a value read inside: without it
           // the interval would keep whatever cadence it had at mount — 2s, from
-          // the initial unknown state — and never slow down again.
-        }, [sessionId, settled]);
+          // the initial unknown state — and never slow down again. `flick` for
+          // the same reason: while graft tools are running, the fast cadence is
+          // what lets consecutive calls read as one continuous blink instead of
+          // one blink per fifteen seconds.
+        }, [sessionId, settled, flick, pulseCheck]);
 
         const openViz = React.useCallback(() => {
           const repo = basename((status && status.root) || "");
@@ -764,7 +827,8 @@ window.__ModuleLoader__.load({
           h(
             "div",
             {
-              className: "gs-chip gs-clickable " + tone + (ok ? "" : " gs-muted"),
+              className:
+                "gs-chip gs-clickable " + tone + (ok ? "" : " gs-muted") + (flick ? " gs-live" : ""),
               onMouseEnter: enter,
               onMouseLeave: leave,
               onClick: toggleCard,
