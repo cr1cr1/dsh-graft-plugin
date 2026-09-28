@@ -137,11 +137,12 @@ window.__ModuleLoader__.load({
         "@keyframes gs-breathe{0%,100%{opacity:1}50%{opacity:.62}}",
         "@media (prefers-reduced-motion:reduce){.gs-busy .gs-dot{animation:none}.gs-chip.gs-busy{animation:none}}",
         ".gs-idle .gs-dot{color:var(--dsw-alias-label-tertiary,#888)}",
-        // A graft tool is running: the dot blinks this blue, on and off. The
-        // blinking itself is JS toggling `gs-live`; this only paints it, and
-        // reuses the blue the busy state already claims so the chip speaks
-        // one dialect of "working".
-        ".gs-chip.gs-live .gs-dot{color:var(--dsw-alias-state-business-primary,#4b8bd6)}",
+        // A graft tool is running: the dot blinks violet, on and off. The
+        // blinking itself is JS toggling `gs-live`; this only paints it.
+        // Violet is pinned, not an alias: dsw's state palette has no violet,
+        // and it must NOT borrow the busy blue — the two states would be
+        // indistinguishable. Against both green and orange it also pops.
+        ".gs-chip.gs-live .gs-dot{color:#8b5cf6}",
         ".gs-chip.gs-muted{opacity:.6}",
         ".gs-chip.gs-clickable{cursor:pointer}",
         ".gs-chip.gs-clickable:hover{border-color:var(--dsw-alias-border-l3,rgba(128,128,128,.5))}",
