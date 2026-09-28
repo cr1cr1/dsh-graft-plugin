@@ -352,7 +352,11 @@ check('the status payload carries the pulse', /toolUse: pulses\.get\(root\)/.tes
 check('on the cache-hit path too', (indexSource.match(/toolUse: pulses\.get\(root\)/g) ?? []).length === 2)
 check('the flicker style exists and sits on the dot', clientSource.includes('.gs-chip.gs-live .gs-dot{color:#8b5cf6}'))
 check('the client counts incoming pulses', clientSource.includes('toolUse?.count'))
-check('a fresh pulse blinks, on and off, not solid', /for \(const ms of \[0, 175, 350, 525, 700, 875, 1050, 1225, 1400, 1575, 1750\]\)/.test(clientSource))
+check('a fresh pulse blinks, on and off, not solid', /for \(const ms of \[0, 175, 350, 525, 700, 875, 1050, 1225, 1400, 1575, 1750, 1925\]\)/.test(clientSource))
+// Toggles alternate on/off, so an ODD number of marks ends ON — which shipped
+// once as a dot stuck purple after every blink. An even count ends off.
+const marks = clientSource.match(/for \(const ms of \[((?:\d+)(?:, \d+)*)\]\)/)?.[1]?.split(', ').map(Number) ?? []
+check('the blink ends off, back at the resting colour', marks.length > 0 && marks.length % 2 === 0, JSON.stringify(marks))
 check('polling speeds up while the dot is flicking', clientSource.includes('settled && !flick ? 15000 : 2000'))
 check('the flicker timers are cleaned up on unmount', clientSource.includes('for (const t of flickTimers.current) window.clearTimeout(t)'))
 

@@ -596,14 +596,16 @@ window.__ModuleLoader__.load({
           [sessionId],
         );
 
-        // Blink the dot blue on and off — intermittent, never solid — for just
-        // under two seconds, toggling every 175ms. A pulse arriving mid-blink
-        // restarts the run, so a burst of graft calls reads as one flicker that
-        // ends when they do.
+        // Blink the dot violet on and off — intermittent, never solid — for just
+        // under two seconds, toggling every 175ms. The mark list is EVEN on
+        // purpose: the final toggle is always "off", so the dot returns to its
+        // resting colour instead of sticking on violet. A pulse arriving
+        // mid-blink restarts the run, so a burst of graft calls reads as one
+        // flicker that ends when they do.
         const blink = React.useCallback(() => {
           for (const t of flickTimers.current) window.clearTimeout(t);
           flickTimers.current = [];
-          for (const ms of [0, 175, 350, 525, 700, 875, 1050, 1225, 1400, 1575, 1750]) {
+          for (const ms of [0, 175, 350, 525, 700, 875, 1050, 1225, 1400, 1575, 1750, 1925]) {
             const on = flickTimers.current.length % 2 === 0;
             flickTimers.current.push(window.setTimeout(() => setFlick(on), ms));
           }
