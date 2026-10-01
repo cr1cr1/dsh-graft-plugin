@@ -361,6 +361,25 @@ check('polling speeds up while graft tools are active', clientSource.includes('s
 check('a pulse keeps the fast poll for a tail, not just the blink', clientSource.includes('window.setTimeout(() => setRecent(false), 20000)'))
 check('the flicker timers are cleaned up on unmount', clientSource.includes('for (const t of flickTimers.current) window.clearTimeout(t)'))
 
+console.log('\n--- the chip label truncates, the popup builds ---')
+// A long workspace name must collapse to an ellipsis in the trailing-row
+// chip, not stretch the composer. The popup keeps the full path.
+check(
+  'the chip label carries its own ellipsis rule',
+  clientSource.includes('.gs-chip .gs-label{overflow:hidden;text-overflow:ellipsis'),
+)
+check('and the chip renders the label under that class', clientSource.includes('h("span", { className: "gs-label" }'))
+// The popup's Build button calls a `build` remote method — the same plain
+// offline `graft build` the bare /graft runs — with a busy state while it
+// is in flight, then a status re-read so the card shows the fresh graph.
+check('the client declares a build descriptor', clientSource.includes('descriptor("build", ["sessionId"])'))
+check('the host serves a build method', indexSource.includes('markRemoteMethod(GraftStatusRemote.prototype, \'build\')'))
+check('the build runs the plain offline build', indexSource.includes('runGraft([') && indexSource.includes('\'build\''))
+check('a finished build drops the stale cache', /build[\s\S]*?cache\.delete\(root\)/.test(indexSource))
+check('the popup has a Build button', clientSource.includes('"Build"'))
+check('it disables while the build runs', clientSource.includes('disabled: building'))
+check('and re-reads status when the build lands', /service\.status\(sessionId\)[\s\S]*?setRebuild/.test(clientSource) || /build[\s\S]*?pull\(\)/.test(clientSource))
+
 await rm(fixture, { recursive: true, force: true })
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)

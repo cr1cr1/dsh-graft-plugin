@@ -66,7 +66,7 @@ window.__ModuleLoader__.load({
     });
     const CONTRIBUTION = {
       package: "graft-status",
-      descriptors: [descriptor("status", ["sessionId"]), descriptor("viz", ["sessionId"])],
+      descriptors: [descriptor("status", ["sessionId"]), descriptor("viz", ["sessionId"]), descriptor("build", ["sessionId"])],
     };
 
     /**
@@ -127,6 +127,11 @@ window.__ModuleLoader__.load({
         "background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));color:var(--dsw-alias-label-secondary,inherit);",
         "font-size:12px;line-height:1;white-space:nowrap;cursor:default;max-width:200px}",
         ".gs-chip .gs-name{font-weight:600;overflow:hidden;text-overflow:ellipsis}",
+        // The repo name in the trailing-row chip. The chip caps at 200px but
+        // the name itself had no ellipsis of its own, so a long workspace name
+        // stretched the composer instead of collapsing to "name…". The brand
+        // ("graft") and separators never shrink; this span takes the cut.
+        ".gs-chip .gs-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:0 1 auto}",
         ".gs-chip .gs-sep{opacity:.45}",
         ".gs-chip .gs-dot{font-size:9px;line-height:1}",
         ".gs-ok .gs-dot{color:var(--dsw-alias-state-success-primary,#3fa45b)}",
@@ -200,6 +205,16 @@ window.__ModuleLoader__.load({
         "letter-spacing:.07em;opacity:.55;margin-top:1px}",
         ".gs-pop-note{margin-top:10px;padding-top:9px;font-size:11px;opacity:.68;",
         "border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}",
+        // The popup's Build button: small, right-aligned under the stats, in
+        // the brand colour. Disabled (and labelled Building…) while the build
+        // runs, so a double click cannot queue two of them.
+        ".gs-pop-buildrow{display:flex;justify-content:flex-end;margin-top:10px;padding-top:9px;",
+        "border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}",
+        ".gs-build{display:inline-flex;align-items:center;height:24px;padding:0 12px;",
+        "border:0;border-radius:999px;background:var(--dsw-alias-brand-primary,#e5484d);color:#fff;",
+        "font-size:11.5px;font-weight:600;cursor:pointer}",
+        ".gs-build:hover{filter:brightness(1.08)}",
+        ".gs-build:disabled{opacity:.6;cursor:progress}",
         ".gs-pop-reason{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px;",
         "opacity:.75;word-break:break-word;margin-top:4px}",
       ].join("");
@@ -232,7 +247,52 @@ window.__ModuleLoader__.load({
      * under them as supporting detail.
      */
     function StatusCard(props) {
-      const { status } = props;
+      const { status, runBuild, onRebuilt } = props;
+      const [building, setBuilding] = React.useState(false);
+      const [buildError, setBuildError] = React.useState(null);
+
+      // The popup's Build button: the same plain offline `graft build` the
+      // bare /graft runs, for this session's repo. Disabled with a
+      // "Building…" label while it runs; on landing, the seat re-reads status
+      // so the card shows the fresh counts instead of the pre-build ones.
+      const build = React.useCallback(() => {
+        if (building || typeof runBuild !== "function") return;
+        setBuilding(true);
+        setBuildError(null);
+        Promise.resolve(runBuild()).then(
+          (answer) => {
+            setBuilding(false);
+            let next;
+            try {
+              next = unwrap(answer);
+            } catch (error) {
+              setBuildError(String(error?.message ?? error));
+              return;
+            }
+            if (next && next.ok === true) {
+              if (typeof onRebuilt === "function") onRebuilt();
+            } else {
+              setBuildError(String((next && next.reason) || "unknown reason"));
+            }
+          },
+          (error) => {
+            setBuilding(false);
+            setBuildError(String(error?.message ?? error));
+          },
+        );
+      }, [building, runBuild, onRebuilt]);
+
+      const buildRow = h(
+        "div",
+        { className: "gs-pop-buildrow" },
+        h(
+          "button",
+          { type: "button", className: "gs-build", onClick: build, disabled: building },
+          building ? "Building…" : "Build",
+        ),
+      );
+      const buildFailure =
+        buildError === null ? null : h("div", { className: "gs-pop-reason" }, buildError);
       if (status === null || status === undefined) {
         return h(
           "div",
@@ -258,6 +318,8 @@ window.__ModuleLoader__.load({
             ? h("div", { className: "gs-pop-note" }, "git worktree of " + basename(status.worktreeOf) + " — /graft here seeds the first graph from it.")
             : null,
           h("div", { className: "gs-pop-note" }, "Run `graft build` in it once — no API key needed."),
+          buildRow,
+          buildFailure,
         );
       }
 
@@ -293,6 +355,8 @@ window.__ModuleLoader__.load({
             // drift signal at all, so "in sync" is an absence of evidence.
             ? h("div", { className: "gs-pop-note" }, "Read from the graph itself; no live drift signal.")
             : null,
+        buildRow,
+        buildFailure,
       );
     }
 
@@ -689,6 +753,31 @@ window.__ModuleLoader__.load({
           // the initial unknown state — and never slow down again.
         }, [sessionId, settled, recent, pulseCheck]);
 
+        // The build the popup button triggers. Resolved here, in a callback
+        // like every other remote access, rather than in render.
+        const runBuild = React.useCallback(() => {
+          const service = ctx.get("remote.graftStatus");
+          if (service === undefined || service === null) {
+            return Promise.reject(new Error("graft-status host half is not mounted"));
+          }
+          return service.build(sessionId);
+        }, [sessionId]);
+
+        // Re-read status on demand — after the popup's Build lands — rather
+        // than waiting out the poll. Shared with the interval's pull above.
+        const repull = React.useCallback(() => {
+          const service = ctx.get("remote.graftStatus");
+          if (service === undefined || service === null) return;
+          Promise.resolve(service.status(sessionId)).then(
+            (answer) => {
+              const next = unwrap(answer);
+              setStatus(next);
+              pulseCheck(next);
+            },
+            () => {},
+          );
+        }, [sessionId, pulseCheck]);
+
         const openViz = React.useCallback(() => {
           const repo = basename((status && status.root) || "");
 
@@ -844,7 +933,15 @@ window.__ModuleLoader__.load({
         return h(
           "div",
           { className: "gs-wrap", ref: wrap },
-          card ? h(StatusCard, { status }) : null,
+          card
+            ? h(StatusCard, {
+                status,
+                runBuild,
+                // After a popup build lands the card shows the fresh graph,
+                // not the pre-build counts, without waiting out the poll.
+                onRebuilt: repull,
+              })
+            : null,
           h(
             "div",
             {
@@ -873,7 +970,7 @@ window.__ModuleLoader__.load({
             h("span", { className: "gs-dot", "aria-hidden": "true" }, glyph),
             h("span", { className: "gs-name" }, "graft"),
             h("span", { className: "gs-sep" }, "·"),
-            h("span", null, label),
+            h("span", { className: "gs-label" }, label),
             ok && freshness === "stale" ? h("span", { className: "gs-sep" }, "·") : null,
             ok && freshness === "stale" ? h("span", null, "stale") : null,
           ),

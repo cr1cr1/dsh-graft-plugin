@@ -48,7 +48,7 @@ import { dirname, join, resolve } from 'node:path'
 
 import { createAutoSync } from './auto-sync.js'
 import { createGraftCommand } from './command.js'
-import { graftTools, resolveGraftCommand } from './graft-tools.js'
+import { graftTools, resolveGraftCommand, runGraft } from './graft-tools.js'
 
 export const name = 'graft-status'
 
@@ -355,6 +355,15 @@ export async function computeStatus(root, io) {
 /** graft viz's own default. Kept so a URL a user already has still works. */
 const VIZ_PORT = 4400
 
+/**
+ * How long a build from the popup may take before it gives up, in ms.
+ *
+ * The same bound as the bare /graft: a small repo finishes in about a
+ * second, a large one can take minutes, and a wedged graft must not hold
+ * the button busy forever.
+ */
+const BUILD_TIMEOUT_MS = 180_000
+
 /** Is something already answering on this port? */
 async function vizAlive(port) {
   try {
@@ -439,6 +448,12 @@ class GraftStatusRemote extends TypertRemoteService {
     if (liveOps === null) throw new Error('graft-status is not ready')
     return liveOps.viz(sessionId)
   }
+
+  /** Run the plain offline `graft build` for that session's repo. */
+  build(sessionId) {
+    if (liveOps === null) throw new Error('graft-status is not ready')
+    return liveOps.build(sessionId)
+  }
 }
 
 /** Emulate the @Remote decorator without decorator syntax. */
@@ -464,6 +479,7 @@ function markRemoteMethod(prototype, method) {
 
 markRemoteMethod(GraftStatusRemote.prototype, 'status')
 markRemoteMethod(GraftStatusRemote.prototype, 'viz')
+markRemoteMethod(GraftStatusRemote.prototype, 'build')
 
 export function apply(ctx, config = {}) {
   const fallbackFrom = typeof config.cwd === 'string' && config.cwd.length > 0 ? config.cwd : process.cwd()
@@ -629,6 +645,29 @@ export function apply(ctx, config = {}) {
       } finally {
         vizPending.delete(root)
       }
+    },
+
+    build: async (sessionId) => {
+      const from = cwdFor(sessionId)
+      let root
+      try {
+        root = await findGraftRoot(from, io.exists, io.readText)
+      } catch (error) {
+        return { ok: false, reason: String(error?.message ?? error), from }
+      }
+      // Same rule as the bare /graft: rebuild where the index lives, or
+      // initialise the workspace itself when there is none yet.
+      const target = root ?? from
+      const initialising = root === undefined
+      const result = await runGraft(['build', target], target, { timeoutMs: BUILD_TIMEOUT_MS })
+      const built = await findGraftRoot(target, io.exists, io.readText)
+      if (built === undefined) {
+        return { ok: false, reason: `graft build produced no index in ${target}.\n\n${result.text.slice(0, 1200)}`, root: target }
+      }
+      // Dropped so the next status poll reads the rebuilt graph, not the
+      // pre-build counts for the rest of the cache window.
+      cache.delete(target)
+      return { ok: true, root: target, initialising, detail: result.text.slice(0, 1200) }
     },
   }
 
