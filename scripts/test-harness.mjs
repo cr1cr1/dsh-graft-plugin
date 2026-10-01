@@ -422,6 +422,18 @@ check('its footer holds both accept and decline', clientSource.includes('Build i
 // the ugly box rather than going missing silently. The fallback is the ONLY
 // window.confirm in the file.
 check('only the fallback uses the browser box', (clientSource.match(/window\.confirm\(/g) ?? []).length === 1)
+// The modal accept must START the build while the modal is still open: it may
+// only close the modal after the build promise is underway. Closing first
+// (unmounting the card's modal subtree in the same tick) shipped once as an
+// accept that dismissed the dialog and built nothing.
+check('the accept starts the build while the modal is open', /startBuild[\s\S]{0,300}setConfirming\(false\)/.test(clientSource))
+check('the modal never closes before the build promise exists', !/setConfirming\(false\)[\s\S]{0,60}Promise\.resolve\(runBuild/.test(clientSource))
+// The confirm modal portals to document.body — OUTSIDE the card's wrap — so
+// the seat's capture-phase click-away closer would unmount the card (modal
+// included) before the accept's own click dispatches. That shipped once as an
+// accept that hid the dialog and built nothing; the closer must let modal
+// clicks through.
+check('the click-away closer lets modal clicks through', /closest\(['"]\[role="dialog"\]/.test(clientSource))
 check('the accept runs the plain offline initialise', /runGraft\(\['build', from\], from/.test(indexSource))
 check('a failed initialise reports graft\'s own message', /produced no index/.test(indexSource))
 check('a fresh initialise resolves as initialising', /initialising: true/.test(indexSource))

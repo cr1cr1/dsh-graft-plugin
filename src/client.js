@@ -789,7 +789,14 @@ window.__ModuleLoader__.load({
           const onDocument = (event) => {
             // `contains` rather than a target comparison, so a click on the
             // card's own text — or on the chip, which toggles — is not treated
-            // as "outside" and closed twice.
+            // as "outside" and closed twice. Clicks inside the confirm modal
+            // are ALSO inside: it portals to document.body, outside the wrap,
+            // so without this guard the capture-phase closer unmounts the card
+            // (modal included) before the accept's own click ever dispatches —
+            // an accept that hides the dialog and builds nothing.
+            const inModal =
+              event.target instanceof Element && event.target.closest('[role="dialog"], .gs-modal-foot') !== null;
+            if (inModal) return;
             if (wrap.current !== null && wrap.current.contains(event.target)) return;
             setCard(false);
           };
