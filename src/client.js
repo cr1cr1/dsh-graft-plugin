@@ -263,14 +263,15 @@ window.__ModuleLoader__.load({
       const [buildError, setBuildError] = React.useState(null);
 
       // The popup's Build button runs the same rebuild the automatic hooks
-      // run, for this session's repo. It holds Building… until OBSERVED
-      // freshness flips to synced — not until the build call lands, which
-      // only means "started". A bare `graft build` was tried here first and
-      // shipped as a press that changed nothing: the child exited while
-      // stats.json still read dirty, the button re-enabled against a pill
-      // that still said STALE, and the pill only moved when some later
-      // rebuild rewrote stats. A timed-out wait re-enables with the last
-      // error rather than holding Building… forever.
+      // run, for this session's repo — or the plain offline initialise when
+      // there is no index yet. It holds Building… until OBSERVED freshness
+      // flips to synced — not until the build call lands, which only means
+      // "started". A bare `graft build` was tried here first and shipped as
+      // a press that changed nothing: the child exited while stats.json still
+      // read dirty, the button re-enabled against a pill that still said
+      // STALE, and the pill only moved when some later rebuild rewrote stats.
+      // A timed-out wait re-enables with the last error rather than holding
+      // Building… forever.
       const build = React.useCallback(() => {
         if (building || typeof runBuild !== "function") return;
         setBuilding(true);
@@ -290,6 +291,13 @@ window.__ModuleLoader__.load({
             }
             if (!started || started.ok !== true) {
               finish(false, String((started && started.reason) || "unknown reason"));
+              return;
+            }
+            // A fresh initialise has no stats.json yet for a freshness poll to
+            // observe, so there is nothing to wait for — the next status poll
+            // picks the new graph up on its own.
+            if (started.initialising === true) {
+              finish(true);
               return;
             }
             if (typeof onSynced === "function") {
@@ -316,7 +324,12 @@ window.__ModuleLoader__.load({
           pill,
           h(
             "button",
-            { type: "button", className: "gs-build", onClick: build, disabled: building },
+            {
+              type: "button",
+              className: "gs-build",
+              onClick: () => build(),
+              disabled: building,
+            },
             building ? "Building…" : "Build",
           ),
         );

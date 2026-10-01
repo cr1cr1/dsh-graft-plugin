@@ -48,7 +48,7 @@ import { dirname, join, resolve } from 'node:path'
 
 import { createAutoSync } from './auto-sync.js'
 import { createGraftCommand } from './command.js'
-import { graftTools, resolveGraftCommand } from './graft-tools.js'
+import { graftTools, resolveGraftCommand, runGraft } from './graft-tools.js'
 
 export const name = 'graft-status'
 
@@ -355,6 +355,15 @@ export async function computeStatus(root, io) {
 /** graft viz's own default. Kept so a URL a user already has still works. */
 const VIZ_PORT = 4400
 
+/**
+ * How long an initialise from the popup may take before it gives up, in ms.
+ *
+ * The same bound as the bare /graft: a small repo finishes in about a
+ * second, a large one can take minutes, and a wedged graft must not hold
+ * the button busy forever.
+ */
+const BUILD_TIMEOUT_MS = 180_000
+
 /** Is something already answering on this port? */
 async function vizAlive(port) {
   try {
@@ -440,7 +449,7 @@ class GraftStatusRemote extends TypertRemoteService {
     return liveOps.viz(sessionId)
   }
 
-  /** Run the plain offline `graft build` for that session's repo. */
+  /** Rebuild that session's repo, or initialise it when there is none. */
   build(sessionId) {
     if (liveOps === null) throw new Error('graft-status is not ready')
     return liveOps.build(sessionId)
@@ -656,10 +665,19 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         return { ok: false, reason: String(error?.message ?? error), from }
       }
-      // No index above the workspace: nothing to rebuild. Initialising one is
-      // the /graft command's job (it reports counts and next steps); a chip
-      // button that silently indexed a tree would surprise.
-      if (root === undefined) return { ok: false, reason: 'no graft index above ' + from, from }
+      // No index above the workspace: initialise the workspace itself, plain
+      // offline `graft build` — the same argv the bare /graft runs, $0, no
+      // API key. sync-run cannot do this job (no index yet to sync), so this
+      // is the one place a bare build is correct.
+      if (root === undefined) {
+        const result = await runGraft(['build', from], from, { timeoutMs: BUILD_TIMEOUT_MS })
+        const built = await findGraftRoot(from, io.exists, io.readText)
+        if (built === undefined) {
+          return { ok: false, reason: `graft build produced no index in ${from}.\n\n${result.text.slice(0, 1200)}`, root: from }
+        }
+        cache.delete(from)
+        return { ok: true, root: from, initialising: true }
+      }
       // The SAME rebuild the automatic hooks run — graft's own sync-run.js,
       // which patches stats.json on the way out (clearing `dirty`, stamping
       // `syncedAt`, writing the new counts). A bare `graft build` was tried

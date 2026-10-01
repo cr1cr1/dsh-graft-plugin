@@ -382,9 +382,8 @@ check('the build goes through the shared rebuild engine', /build[\s\S]{0,600}aut
 check('a finished build drops the stale cache', /build[\s\S]*?cache\.delete\(root\)/.test(indexSource))
 check('the popup has a Build button', clientSource.includes('"Build"'))
 check('it disables while the build runs', clientSource.includes('disabled: building'))
-// The button sits IN the header row, right of the status pill — not in a
-// footer row of its own. Pinned by absence (no footer styles) and presence
-// (one shared button element, rendered in both pill-carrying heads).
+// The rebuild button sits IN the header row, right of the status pill — not
+// in a footer row of its own.
 check('no footer row survives the move', !clientSource.includes('gs-pop-buildrow'))
 check(
   'one header group, rendered in both heads',
@@ -410,6 +409,14 @@ check('the button waits for observed sync, not the promise', clientSource.includ
 check('with a bounded wait, not forever', clientSource.includes('SYNC_WAIT_MS'))
 check('the seat hands the waiter to the card', clientSource.includes('onSynced: waitForSynced'))
 check('a build that never reports sync re-enables with an error', clientSource.includes('did not report in sync'))
+
+console.log('\n--- Build in a workspace with no index builds directly ---')
+// One press builds: no confirm step, no gate. The plain offline initialise
+// runs in the workspace itself, same argv as the bare /graft.
+check('no confirm step stands between press and build', !clientSource.includes('confirmBuild') && !clientSource.includes('needsConfirm'))
+check('the host initialises the workspace itself', /runGraft\(\['build', from\], from/.test(indexSource))
+check('a failed initialise reports graft\'s own message', /produced no index/.test(indexSource))
+check('a fresh initialise resolves as initialising', /initialising: true/.test(indexSource))
 
 await rm(fixture, { recursive: true, force: true })
 
