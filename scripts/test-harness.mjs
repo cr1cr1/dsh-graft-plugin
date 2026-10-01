@@ -410,11 +410,14 @@ check('with a bounded wait, not forever', clientSource.includes('SYNC_WAIT_MS'))
 check('the seat hands the waiter to the card', clientSource.includes('onSynced: waitForSynced'))
 check('a build that never reports sync re-enables with an error', clientSource.includes('did not report in sync'))
 
-console.log('\n--- Build in a workspace with no index builds directly ---')
-// One press builds: no confirm step, no gate. The plain offline initialise
-// runs in the workspace itself, same argv as the bare /graft.
-check('no confirm step stands between press and build', !clientSource.includes('confirmBuild') && !clientSource.includes('needsConfirm'))
-check('the host initialises the workspace itself', /runGraft\(\['build', from\], from/.test(indexSource))
+console.log('\n--- Build in a workspace with no index confirms first ---')
+// One press must NOT initialise blindly: the card prompts ("Build a new
+// graft index here?") and only the accept runs the plain offline build in
+// the workspace itself, same argv as the bare /graft.
+check('the card prompts before initialising', clientSource.includes('window.confirm('))
+check('the prompt names what will happen', /confirm\([\s\S]{0,200}[Bb]uild/.test(clientSource))
+check('a declined prompt builds nothing', /confirm[\s\S]{0,300}return/.test(clientSource) || clientSource.includes('if (!proceed') || clientSource.includes('if (proceed'))
+check('the accept runs the plain offline initialise', /runGraft\(\['build', from\], from/.test(indexSource))
 check('a failed initialise reports graft\'s own message', /produced no index/.test(indexSource))
 check('a fresh initialise resolves as initialising', /initialising: true/.test(indexSource))
 

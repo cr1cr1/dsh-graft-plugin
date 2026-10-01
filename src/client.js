@@ -274,6 +274,18 @@ window.__ModuleLoader__.load({
       // Building… forever.
       const build = React.useCallback(() => {
         if (building || typeof runBuild !== "function") return;
+        // No index yet: indexing a tree writes a graft/ directory into it, so
+        // the press prompts first and a decline builds nothing. A blind press
+        // that silently indexed whatever happened to be open shipped once;
+        // this prompt is the reason it will not ship again.
+        if (status !== null && status.ok !== true) {
+          const proceed = window.confirm(
+            "Build a new graft index in this workspace?\n\n" +
+              String(status.from ?? status.root ?? "") +
+              "\n\nPlain structural build — offline, no API key needed.",
+          );
+          if (!proceed) return;
+        }
         setBuilding(true);
         setBuildError(null);
         const finish = (ok, reason) => {
