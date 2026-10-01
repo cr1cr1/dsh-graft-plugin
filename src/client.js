@@ -205,15 +205,16 @@ window.__ModuleLoader__.load({
         "letter-spacing:.07em;opacity:.55;margin-top:1px}",
         ".gs-pop-note{margin-top:10px;padding-top:9px;font-size:11px;opacity:.68;",
         "border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}",
-        // The popup's Build button: small, right-aligned under the stats, in
-        // the brand colour. Disabled (and labelled Building…) while the build
+        // The popup's Build button, in the header right of the status pill.
+        // Quiet at header scale — an outline button, not the brand fill —
+        // because a 24px solid pill would dominate the 9.5px status pill it
+        // sits beside. Disabled (and labelled Building…) while the build
         // runs, so a double click cannot queue two of them.
-        ".gs-pop-buildrow{display:flex;justify-content:flex-end;margin-top:10px;padding-top:9px;",
-        "border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}",
-        ".gs-build{display:inline-flex;align-items:center;height:24px;padding:0 12px;",
-        "border:0;border-radius:999px;background:var(--dsw-alias-brand-primary,#e5484d);color:#fff;",
-        "font-size:11.5px;font-weight:600;cursor:pointer}",
-        ".gs-build:hover{filter:brightness(1.08)}",
+        ".gs-build{margin-left:auto;display:inline-flex;align-items:center;height:20px;padding:0 10px;",
+        "border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:999px;",
+        "background:transparent;color:var(--dsw-alias-label-secondary,inherit);",
+        "font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap}",
+        ".gs-build:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14))}",
         ".gs-build:disabled{opacity:.6;cursor:progress}",
         ".gs-pop-reason{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px;",
         "opacity:.75;word-break:break-word;margin-top:4px}",
@@ -282,14 +283,13 @@ window.__ModuleLoader__.load({
         );
       }, [building, runBuild, onRebuilt]);
 
-      const buildRow = h(
-        "div",
-        { className: "gs-pop-buildrow" },
-        h(
-          "button",
-          { type: "button", className: "gs-build", onClick: build, disabled: building },
-          building ? "Building…" : "Build",
-        ),
+      // One element, rendered in both pill-carrying heads: right of the
+      // status label. Its own margin-left:auto keeps it pinned right even
+      // where the pill's auto margin already pulled the row's tail over.
+      const buildButton = h(
+        "button",
+        { type: "button", className: "gs-build", onClick: build, disabled: building },
+        building ? "Building…" : "Build",
       );
       const buildFailure =
         buildError === null ? null : h("div", { className: "gs-pop-reason" }, buildError);
@@ -311,6 +311,7 @@ window.__ModuleLoader__.load({
             { className: "gs-pop-head" },
             h("span", { className: "gs-pop-title" }, "graft"),
             h("span", { className: "gs-pill gs-p-idle" }, "no graph"),
+            buildButton,
           ),
           h("div", null, "No graft index for this workspace."),
           h("div", { className: "gs-pop-reason" }, String(status.reason ?? "unknown reason")),
@@ -318,7 +319,6 @@ window.__ModuleLoader__.load({
             ? h("div", { className: "gs-pop-note" }, "git worktree of " + basename(status.worktreeOf) + " — /graft here seeds the first graph from it.")
             : null,
           h("div", { className: "gs-pop-note" }, "Run `graft build` in it once — no API key needed."),
-          buildRow,
           buildFailure,
         );
       }
@@ -335,6 +335,7 @@ window.__ModuleLoader__.load({
           { className: "gs-pop-head" },
           h("span", { className: "gs-pop-title" }, "graft"),
           h("span", { className: "gs-pill " + pill.className }, pill.label),
+          buildButton,
         ),
         h("div", { className: "gs-pop-repo" }, basename(status.root)),
         h("div", { className: "gs-pop-path" }, status.root),
@@ -355,7 +356,6 @@ window.__ModuleLoader__.load({
             // drift signal at all, so "in sync" is an absence of evidence.
             ? h("div", { className: "gs-pop-note" }, "Read from the graph itself; no live drift signal.")
             : null,
-        buildRow,
         buildFailure,
       );
     }

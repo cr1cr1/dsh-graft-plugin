@@ -378,6 +378,15 @@ check('the build runs the plain offline build', indexSource.includes('runGraft([
 check('a finished build drops the stale cache', /build[\s\S]*?cache\.delete\(root\)/.test(indexSource))
 check('the popup has a Build button', clientSource.includes('"Build"'))
 check('it disables while the build runs', clientSource.includes('disabled: building'))
+// The button sits IN the header row, right of the status pill — not in a
+// footer row of its own. Pinned by absence (no footer styles) and presence
+// (one shared button element, rendered in both pill-carrying heads).
+check('no footer row survives the move', !clientSource.includes('gs-pop-buildrow'))
+check(
+  'one header button, rendered in both heads',
+  (clientSource.match(/buildButton/g) ?? []).length === 3,
+  String((clientSource.match(/buildButton/g) ?? []).length),
+)
 check('and re-reads status when the build lands', /service\.status\(sessionId\)[\s\S]*?setRebuild/.test(clientSource) || /build[\s\S]*?pull\(\)/.test(clientSource))
 
 await rm(fixture, { recursive: true, force: true })
