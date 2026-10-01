@@ -383,15 +383,20 @@ check('it disables while the build runs', clientSource.includes('disabled: build
 // (one shared button element, rendered in both pill-carrying heads).
 check('no footer row survives the move', !clientSource.includes('gs-pop-buildrow'))
 check(
-  'one header button, rendered in both heads',
-  (clientSource.match(/buildButton/g) ?? []).length === 3,
-  String((clientSource.match(/buildButton/g) ?? []).length),
+  'one header group, rendered in both heads',
+  (clientSource.match(/headGroup\(h\(/g) ?? []).length === 2,
+  String((clientSource.match(/headGroup\(h\(/g) ?? []).length),
 )
-// Pill and Build travel as one group pinned right: the button's auto margin
-// is the row's ONLY spacer, so the 8px flex gap is the only thing between
-// them and nothing can split them apart across the header.
-check('the button is the header row’s only spacer', clientSource.includes('.gs-build{margin-left:auto'))
+// Pill and Build travel as one group pinned right: a wrapper carries the
+// row's only auto margin, so the flex gap is the only thing between the
+// pair and nothing can split them — either apart or across the header.
+check('the header pills travel in one right-pinned group', clientSource.includes('.gs-pop-group{margin-left:auto'))
 check('the pill no longer spaces itself away from the button', !clientSource.includes('.gs-pill{margin-left:auto'))
+// The card itself is click-through (pointer-events:none), which was fine
+// while it was pure text — but any button inside it is dead unless it
+// re-enables events on itself. That shipped once as a button that could
+// never be pressed; this guard is the reason it will not ship again.
+check('the Build button re-enables pointer events on itself', clientSource.includes('.gs-build{') && /\.gs-build\{[^}]*pointer-events:auto/.test(clientSource))
 check('and re-reads status when the build lands', /service\.status\(sessionId\)[\s\S]*?setRebuild/.test(clientSource) || /build[\s\S]*?pull\(\)/.test(clientSource))
 
 await rm(fixture, { recursive: true, force: true })

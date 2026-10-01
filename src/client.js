@@ -189,6 +189,11 @@ window.__ModuleLoader__.load({
         "@keyframes gs-pop-in{to{opacity:1;transform:none}}",
         ".gs-pop-head{display:flex;align-items:center;gap:8px;margin-bottom:9px}",
         ".gs-pop-head .gs-pop-title{font-weight:700;letter-spacing:.02em}",
+        // Pill + Build travel as ONE group at the header's right: the wrapper
+        // carries the row's only auto margin, so the 8px flex gap is the only
+        // thing between the pair and nothing can split them — either apart or
+        // across the header.
+        ".gs-pop-group{margin-left:auto;display:inline-flex;align-items:center;gap:8px}",
         ".gs-pill{font-size:9.5px;font-weight:700;text-transform:uppercase;",
         "letter-spacing:.07em;padding:3px 8px;border-radius:999px;white-space:nowrap}",
         ".gs-pill.gs-p-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fa45b) 18%,transparent);color:var(--dsw-alias-state-success-primary,#5cbe78)}",
@@ -206,13 +211,16 @@ window.__ModuleLoader__.load({
         ".gs-pop-note{margin-top:10px;padding-top:9px;font-size:11px;opacity:.68;",
         "border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}",
         // The popup's Build button, grouped with the status pill at the
-        // header's right. Its auto margin is the row's ONLY spacer, so the 8px
-        // flex gap is the only thing between them: title left, pill + button
-        // together right. Quiet at header scale — an outline button, not the
-        // brand fill — because a 24px solid pill would dominate the 9.5px
-        // status pill it sits beside. Disabled (and labelled Building…)
-        // while the build runs, so a double click cannot queue two of them.
-        ".gs-build{margin-left:auto;display:inline-flex;align-items:center;height:20px;padding:0 10px;",
+        // header's right (see .gs-pop-group). Quiet at header scale — an
+        // outline button, not the brand fill — because a 24px solid pill
+        // would dominate the 9.5px status pill it sits beside. Disabled (and
+        // labelled Building…) while the build runs, so a double click cannot
+        // queue two of them.
+        //
+        // pointer-events:auto is load-bearing, not cosmetic: the card itself
+        // is pointer-events:none (pure text needs no clicks and must not eat
+        // them), so without this the button renders but can never be pressed.
+        ".gs-build{pointer-events:auto;display:inline-flex;align-items:center;height:20px;padding:0 10px;",
         "border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:999px;",
         "background:transparent;color:var(--dsw-alias-label-secondary,inherit);",
         "font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap}",
@@ -285,15 +293,19 @@ window.__ModuleLoader__.load({
         );
       }, [building, runBuild, onRebuilt]);
 
-      // One element, rendered in both pill-carrying heads: grouped with the
-      // status pill at the right. Its own margin-left:auto keeps the PAIR
-      // pinned right even where the pill's auto margin already pulled the
-      // row's tail over.
-      const buildButton = h(
-        "button",
-        { type: "button", className: "gs-build", onClick: build, disabled: building },
-        building ? "Building…" : "Build",
-      );
+      // One pair, rendered in both pill-carrying heads: pill and button
+      // grouped at the header's right, travelling together.
+      const headGroup = (pill) =>
+        h(
+          "div",
+          { className: "gs-pop-group" },
+          pill,
+          h(
+            "button",
+            { type: "button", className: "gs-build", onClick: build, disabled: building },
+            building ? "Building…" : "Build",
+          ),
+        );
       const buildFailure =
         buildError === null ? null : h("div", { className: "gs-pop-reason" }, buildError);
       if (status === null || status === undefined) {
@@ -313,8 +325,7 @@ window.__ModuleLoader__.load({
             "div",
             { className: "gs-pop-head" },
             h("span", { className: "gs-pop-title" }, "graft"),
-            h("span", { className: "gs-pill gs-p-idle" }, "no graph"),
-            buildButton,
+            headGroup(h("span", { className: "gs-pill gs-p-idle" }, "no graph")),
           ),
           h("div", null, "No graft index for this workspace."),
           h("div", { className: "gs-pop-reason" }, String(status.reason ?? "unknown reason")),
@@ -337,8 +348,7 @@ window.__ModuleLoader__.load({
           "div",
           { className: "gs-pop-head" },
           h("span", { className: "gs-pop-title" }, "graft"),
-          h("span", { className: "gs-pill " + pill.className }, pill.label),
-          buildButton,
+          headGroup(h("span", { className: "gs-pill " + pill.className }, pill.label)),
         ),
         h("div", { className: "gs-pop-repo" }, basename(status.root)),
         h("div", { className: "gs-pop-path" }, status.root),
