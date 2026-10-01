@@ -189,7 +189,7 @@ window.__ModuleLoader__.load({
         "@keyframes gs-pop-in{to{opacity:1;transform:none}}",
         ".gs-pop-head{display:flex;align-items:center;gap:8px;margin-bottom:9px}",
         ".gs-pop-head .gs-pop-title{font-weight:700;letter-spacing:.02em}",
-        ".gs-pill{margin-left:auto;font-size:9.5px;font-weight:700;text-transform:uppercase;",
+        ".gs-pill{font-size:9.5px;font-weight:700;text-transform:uppercase;",
         "letter-spacing:.07em;padding:3px 8px;border-radius:999px;white-space:nowrap}",
         ".gs-pill.gs-p-ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#3fa45b) 18%,transparent);color:var(--dsw-alias-state-success-primary,#5cbe78)}",
         ".gs-pill.gs-p-warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#d08442) 20%,transparent);color:var(--dsw-alias-state-warn-primary,#e0a066)}",
@@ -205,11 +205,13 @@ window.__ModuleLoader__.load({
         "letter-spacing:.07em;opacity:.55;margin-top:1px}",
         ".gs-pop-note{margin-top:10px;padding-top:9px;font-size:11px;opacity:.68;",
         "border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2))}",
-        // The popup's Build button, in the header right of the status pill.
-        // Quiet at header scale — an outline button, not the brand fill —
-        // because a 24px solid pill would dominate the 9.5px status pill it
-        // sits beside. Disabled (and labelled Building…) while the build
-        // runs, so a double click cannot queue two of them.
+        // The popup's Build button, grouped with the status pill at the
+        // header's right. Its auto margin is the row's ONLY spacer, so the 8px
+        // flex gap is the only thing between them: title left, pill + button
+        // together right. Quiet at header scale — an outline button, not the
+        // brand fill — because a 24px solid pill would dominate the 9.5px
+        // status pill it sits beside. Disabled (and labelled Building…)
+        // while the build runs, so a double click cannot queue two of them.
         ".gs-build{margin-left:auto;display:inline-flex;align-items:center;height:20px;padding:0 10px;",
         "border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:999px;",
         "background:transparent;color:var(--dsw-alias-label-secondary,inherit);",
@@ -283,9 +285,10 @@ window.__ModuleLoader__.load({
         );
       }, [building, runBuild, onRebuilt]);
 
-      // One element, rendered in both pill-carrying heads: right of the
-      // status label. Its own margin-left:auto keeps it pinned right even
-      // where the pill's auto margin already pulled the row's tail over.
+      // One element, rendered in both pill-carrying heads: grouped with the
+      // status pill at the right. Its own margin-left:auto keeps the PAIR
+      // pinned right even where the pill's auto margin already pulled the
+      // row's tail over.
       const buildButton = h(
         "button",
         { type: "button", className: "gs-build", onClick: build, disabled: building },

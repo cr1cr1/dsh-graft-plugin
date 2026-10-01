@@ -387,6 +387,11 @@ check(
   (clientSource.match(/buildButton/g) ?? []).length === 3,
   String((clientSource.match(/buildButton/g) ?? []).length),
 )
+// Pill and Build travel as one group pinned right: the button's auto margin
+// is the row's ONLY spacer, so the 8px flex gap is the only thing between
+// them and nothing can split them apart across the header.
+check('the button is the header row’s only spacer', clientSource.includes('.gs-build{margin-left:auto'))
+check('the pill no longer spaces itself away from the button', !clientSource.includes('.gs-pill{margin-left:auto'))
 check('and re-reads status when the build lands', /service\.status\(sessionId\)[\s\S]*?setRebuild/.test(clientSource) || /build[\s\S]*?pull\(\)/.test(clientSource))
 
 await rm(fixture, { recursive: true, force: true })
