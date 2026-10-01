@@ -245,7 +245,7 @@ window.__ModuleLoader__.load({
         // the theme's own button language. The Modal itself (mask, card,
         // Escape, focus) is dsh's chrome and needs no styles here.
         ".gs-modal-foot{display:flex;gap:8px;justify-content:flex-end}",
-        ".gs-build.gs-confirm{background:var(--dsw-alias-brand-primary,#e5484d);border-color:transparent;color:#fff}",
+        ".gs-build.gs-confirm{background:var(--dsw-alias-brand-primary,#e5484d);border-color:transparent;color:var(--dsw-alias-label-primary-foreground,#fff)}",
         ".gs-pop-reason{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px;",
         "opacity:.75;word-break:break-word;margin-top:4px}",
       ].join("");
