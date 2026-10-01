@@ -8,6 +8,21 @@ window.__ModuleLoader__.load({
     const React = require("react");
     const h = React.createElement;
 
+    /**
+     * dsh's own themed modal chrome, the same package permission-presets
+     * renders its RiskConfirmation from — body-portaled, Escape + mask-click
+     * handled, themed through the --dsw-* variables for free.
+     *
+     * Guarded: if the package is ever unresolvable the confirm falls back to
+     * window.confirm, so the gate can never go missing silently.
+     */
+    let Primitives = null;
+    try {
+      Primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+    } catch {
+      Primitives = null;
+    }
+
     /* ================================================================== *
      * graft-status — the browser half.
      *
@@ -226,6 +241,11 @@ window.__ModuleLoader__.load({
         "font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap}",
         ".gs-build:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14))}",
         ".gs-build:disabled{opacity:.6;cursor:progress}",
+        // The confirm modal's footer: Cancel beside a brand-fill accept, in
+        // the theme's own button language. The Modal itself (mask, card,
+        // Escape, focus) is dsh's chrome and needs no styles here.
+        ".gs-modal-foot{display:flex;gap:8px;justify-content:flex-end}",
+        ".gs-build.gs-confirm{background:var(--dsw-alias-brand-primary,#e5484d);border-color:transparent;color:#fff}",
         ".gs-pop-reason{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px;",
         "opacity:.75;word-break:break-word;margin-top:4px}",
       ].join("");
@@ -261,6 +281,9 @@ window.__ModuleLoader__.load({
       const { status, runBuild, onSynced } = props;
       const [building, setBuilding] = React.useState(false);
       const [buildError, setBuildError] = React.useState(null);
+      // Whether the themed confirm modal is open (no index yet). Held here
+      // because only the no-graph path ever asks.
+      const [confirming, setConfirming] = React.useState(false);
 
       // The popup's Build button runs the same rebuild the automatic hooks
       // run, for this session's repo — or the plain offline initialise when
@@ -272,22 +295,37 @@ window.__ModuleLoader__.load({
       // STALE, and the pill only moved when some later rebuild rewrote stats.
       // A timed-out wait re-enables with the last error rather than holding
       // Building… forever.
-      const build = React.useCallback(() => {
+      const proceed = React.useCallback(() => {
         if (building || typeof runBuild !== "function") return;
-        // No index yet: indexing a tree writes a graft/ directory into it, so
-        // the press prompts first and a decline builds nothing. A blind press
-        // that silently indexed whatever happened to be open shipped once;
-        // this prompt is the reason it will not ship again.
-        if (status !== null && status.ok !== true) {
-          const proceed = window.confirm(
+        // Indexed: rebuild at once, no question. Unindexed: indexing a tree
+        // writes a graft/ directory into it, so the press asks first and a
+        // decline builds nothing. A blind press that silently indexed whatever
+        // happened to be open shipped once; this gate is the reason it will
+        // not ship again.
+        if (status !== null && status.ok === true) {
+          startBuild();
+          return;
+        }
+        if (Primitives !== null && typeof Primitives.Modal === "function") {
+          setConfirming(true);
+          return;
+        }
+        // Primitives unresolvable: the ugly box is better than no gate.
+        if (
+          window.confirm(
             "Build a new graft index in this workspace?\n\n" +
               String(status.from ?? status.root ?? "") +
               "\n\nPlain structural build — offline, no API key needed.",
-          );
-          if (!proceed) return;
+          )
+        ) {
+          startBuild();
         }
+      }, [building, runBuild, status]);
+      const startBuild = React.useCallback(() => {
+        if (building || typeof runBuild !== "function") return;
         setBuilding(true);
         setBuildError(null);
+        setConfirming(false);
         const finish = (ok, reason) => {
           setBuilding(false);
           if (!ok) setBuildError(String(reason || "unknown reason"));
@@ -339,7 +377,7 @@ window.__ModuleLoader__.load({
             {
               type: "button",
               className: "gs-build",
-              onClick: () => build(),
+              onClick: () => proceed(),
               disabled: building,
             },
             building ? "Building…" : "Build",
@@ -357,6 +395,54 @@ window.__ModuleLoader__.load({
       }
 
       if (status.ok !== true) {
+        // The themed confirm: dsh's own Modal, same chrome as every other
+        // dialog in the app. Rendered here (not in the head) because a modal
+        // portals to the body — it must not live inside the click-through
+        // card. Cancel/Escape/mask-click closes and builds nothing; the
+        // accept starts the initialise.
+        const confirmModal =
+          Primitives !== null && typeof Primitives.Modal === "function"
+            ? h(
+                Primitives.Modal,
+                {
+                  open: confirming,
+                  onClose: () => {
+                    if (!building) setConfirming(false);
+                  },
+                  title: "Build graft index?",
+                  description:
+                    "Index " +
+                    basename(String(status.from ?? status.root ?? "")) +
+                    " with a plain structural build — offline, no API key needed. Writes a graft/ directory there.",
+                  closeLabel: "Close",
+                  footer: h(
+                    "div",
+                    { className: "gs-modal-foot" },
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        className: "gs-build",
+                        onClick: () => setConfirming(false),
+                        disabled: building,
+                      },
+                      "Cancel",
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        className: "gs-build gs-confirm",
+                        onClick: () => startBuild(),
+                        disabled: building,
+                        "data-modal-autofocus": true,
+                      },
+                      building ? "Building…" : "Build index",
+                    ),
+                  ),
+                },
+              )
+            : null;
         return h(
           "div",
           { className: "gs-pop", role: "tooltip" },
@@ -373,6 +459,7 @@ window.__ModuleLoader__.load({
             : null,
           h("div", { className: "gs-pop-note" }, "Run `graft build` in it once — no API key needed."),
           buildFailure,
+          confirmModal,
         );
       }
 

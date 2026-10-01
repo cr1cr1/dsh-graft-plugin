@@ -411,12 +411,17 @@ check('the seat hands the waiter to the card', clientSource.includes('onSynced: 
 check('a build that never reports sync re-enables with an error', clientSource.includes('did not report in sync'))
 
 console.log('\n--- Build in a workspace with no index confirms first ---')
-// One press must NOT initialise blindly: the card prompts ("Build a new
-// graft index here?") and only the accept runs the plain offline build in
-// the workspace itself, same argv as the bare /graft.
-check('the card prompts before initialising', clientSource.includes('window.confirm('))
-check('the prompt names what will happen', /confirm\([\s\S]{0,200}[Bb]uild/.test(clientSource))
-check('a declined prompt builds nothing', /confirm[\s\S]{0,300}return/.test(clientSource) || clientSource.includes('if (!proceed') || clientSource.includes('if (proceed'))
+// The prompt is dsh's own themed Modal, not the browser's ugly box: the card
+// requires the primitives package permission-presets already proves a client
+// bundle can require. Guarded — if the package is ever absent the prompt
+// falls back to window.confirm, so the gate can never go missing silently.
+check('the card prefers dsh\'s own Modal', clientSource.includes('Primitives.Modal') && clientSource.includes('dsh-client-ui-primitives'))
+check('the Modal carries the confirm copy', clientSource.includes('Build graft index?'))
+check('its footer holds both accept and decline', clientSource.includes('Build index') && clientSource.includes('"Cancel"'))
+// Guarded require: if primitives is ever unresolvable the gate falls back to
+// the ugly box rather than going missing silently. The fallback is the ONLY
+// window.confirm in the file.
+check('only the fallback uses the browser box', (clientSource.match(/window\.confirm\(/g) ?? []).length === 1)
 check('the accept runs the plain offline initialise', /runGraft\(\['build', from\], from/.test(indexSource))
 check('a failed initialise reports graft\'s own message', /produced no index/.test(indexSource))
 check('a fresh initialise resolves as initialising', /initialising: true/.test(indexSource))
