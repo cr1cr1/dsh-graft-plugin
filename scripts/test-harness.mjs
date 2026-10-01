@@ -374,7 +374,11 @@ check('and the chip renders the label under that class', clientSource.includes('
 // is in flight, then a status re-read so the card shows the fresh graph.
 check('the client declares a build descriptor', clientSource.includes('descriptor("build", ["sessionId"])'))
 check('the host serves a build method', indexSource.includes('markRemoteMethod(GraftStatusRemote.prototype, \'build\')'))
-check('the build runs the plain offline build', indexSource.includes('runGraft([') && indexSource.includes('\'build\''))
+// The button rebuilds through the SAME sync-run.js the automatic hooks run —
+// never a bare `graft build`, which writes the graph but NOT stats.json, so
+// the pill kept reading the old `dirty` flag and never flipped to IN SYNC.
+// That shipped once as a press that changed nothing.
+check('the build goes through the shared rebuild engine', /build[\s\S]{0,600}autoSync\.rebuild\(root\)/.test(indexSource))
 check('a finished build drops the stale cache', /build[\s\S]*?cache\.delete\(root\)/.test(indexSource))
 check('the popup has a Build button', clientSource.includes('"Build"'))
 check('it disables while the build runs', clientSource.includes('disabled: building'))
@@ -397,7 +401,15 @@ check('the pill no longer spaces itself away from the button', !clientSource.inc
 // re-enables events on itself. That shipped once as a button that could
 // never be pressed; this guard is the reason it will not ship again.
 check('the Build button re-enables pointer events on itself', clientSource.includes('.gs-build{') && /\.gs-build\{[^}]*pointer-events:auto/.test(clientSource))
-check('and re-reads status when the build lands', /service\.status\(sessionId\)[\s\S]*?setRebuild/.test(clientSource) || /build[\s\S]*?pull\(\)/.test(clientSource))
+// The button holds Building… until OBSERVED freshness flips to synced, not
+// until the build promise lands: a build that exits while stats.json still
+// reads dirty (plain `graft build` never patches it) must not re-enable the
+// button against a pill that still says STALE. That shipped once as a press
+// that changed nothing; this guard is the reason it will not ship again.
+check('the button waits for observed sync, not the promise', clientSource.includes('waitForSynced'))
+check('with a bounded wait, not forever', clientSource.includes('SYNC_WAIT_MS'))
+check('the seat hands the waiter to the card', clientSource.includes('onSynced: waitForSynced'))
+check('a build that never reports sync re-enables with an error', clientSource.includes('did not report in sync'))
 
 await rm(fixture, { recursive: true, force: true })
 

@@ -48,7 +48,7 @@ import { dirname, join, resolve } from 'node:path'
 
 import { createAutoSync } from './auto-sync.js'
 import { createGraftCommand } from './command.js'
-import { graftTools, resolveGraftCommand, runGraft } from './graft-tools.js'
+import { graftTools, resolveGraftCommand } from './graft-tools.js'
 
 export const name = 'graft-status'
 
@@ -355,15 +355,6 @@ export async function computeStatus(root, io) {
 /** graft viz's own default. Kept so a URL a user already has still works. */
 const VIZ_PORT = 4400
 
-/**
- * How long a build from the popup may take before it gives up, in ms.
- *
- * The same bound as the bare /graft: a small repo finishes in about a
- * second, a large one can take minutes, and a wedged graft must not hold
- * the button busy forever.
- */
-const BUILD_TIMEOUT_MS = 180_000
-
 /** Is something already answering on this port? */
 async function vizAlive(port) {
   try {
@@ -556,11 +547,21 @@ export function apply(ctx, config = {}) {
   /** root -> in-flight start, so a double click cannot race two spawns. */
   const vizPending = new Map()
 
+  /**
+   * The rebuild engine, shared by the automatic hooks below and the popup's
+   * Build button. Hoisted out of the `autoBuild` block on purpose: the button
+   * must rebuild even in a profile that turned the automatic hooks off.
+   */
+  const autoSync = createAutoSync({
+    cliPath: resolveGraftCommand().prefix[0],
+    minIntervalMs: config.autoBuildMinIntervalMs,
+    writeTools: config.autoBuildTools,
+  })
+
   const vizDeps = {
     alive: vizAlive,
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    spawn: (root, port) => {
-      // Same shell-free invocation the tools use: running graft's own cli.js
+    spawn: (root, port) => {      // Same shell-free invocation the tools use: running graft's own cli.js
       // with this Node means the child IS graft, not a cmd.exe wrapping it —
       // so an ordinary kill() reaches it and no process-tree surgery is needed.
       const how = resolveGraftCommand()
@@ -655,19 +656,25 @@ export function apply(ctx, config = {}) {
       } catch (error) {
         return { ok: false, reason: String(error?.message ?? error), from }
       }
-      // Same rule as the bare /graft: rebuild where the index lives, or
-      // initialise the workspace itself when there is none yet.
-      const target = root ?? from
-      const initialising = root === undefined
-      const result = await runGraft(['build', target], target, { timeoutMs: BUILD_TIMEOUT_MS })
-      const built = await findGraftRoot(target, io.exists, io.readText)
-      if (built === undefined) {
-        return { ok: false, reason: `graft build produced no index in ${target}.\n\n${result.text.slice(0, 1200)}`, root: target }
+      // No index above the workspace: nothing to rebuild. Initialising one is
+      // the /graft command's job (it reports counts and next steps); a chip
+      // button that silently indexed a tree would surprise.
+      if (root === undefined) return { ok: false, reason: 'no graft index above ' + from, from }
+      // The SAME rebuild the automatic hooks run — graft's own sync-run.js,
+      // which patches stats.json on the way out (clearing `dirty`, stamping
+      // `syncedAt`, writing the new counts). A bare `graft build` was tried
+      // here first and shipped as a button that changed nothing: it writes the
+      // graph but NOT stats.json, so the pill kept reading the old `dirty`
+      // flag and never flipped to IN SYNC.
+      const outcome = await autoSync.rebuild(root)
+      if (outcome !== 'started') {
+        return { ok: false, reason: `graft rebuild did not start (${outcome})`, root }
       }
-      // Dropped so the next status poll reads the rebuilt graph, not the
-      // pre-build counts for the rest of the cache window.
-      cache.delete(target)
-      return { ok: true, root: target, initialising, detail: result.text.slice(0, 1200) }
+      // Dropped so the next status poll reads the rebuilding graph, not the
+      // pre-build counts for the rest of the cache window. sync-run sets
+      // `syncing` itself, so the pill shows syncing → in sync for free.
+      cache.delete(root)
+      return { ok: true, root }
     },
   }
 
@@ -768,12 +775,10 @@ export function apply(ctx, config = {}) {
   }
 
   // Auto-rebuild: graft's two Claude Code hooks, on dsh's own seams.
+  // The autoSync instance itself is shared (see above): this block only wires
+  // the AUTOMATIC triggers, so `autoBuild: false` silences the hooks while
+  // the popup's manual Build keeps working.
   if (config.autoBuild !== false) {
-    const autoSync = createAutoSync({
-      cliPath: resolveGraftCommand().prefix[0],
-      minIntervalMs: config.autoBuildMinIntervalMs,
-      writeTools: config.autoBuildTools,
-    })
 
     ctx.on('tools/execute', async (exec, next) => {
       const result = await next()

@@ -77,6 +77,17 @@ console.log('\n--- graft missing is not an error ---')
 const none = createAutoSync({ graft: null, now: () => now, spawn: () => { throw new Error('should not spawn') } })
 check('no graft, no rebuild, no throw', (await none.syncIfDirty('C:/x')) === 'graft-unavailable')
 
+console.log('\n--- a manual Build forces a rebuild, like the popup button ---')
+// The popup's Build must not go through syncIfDirty's gates: a repo whose
+// stats already read clean (plain `graft build` never patches stats.json, so
+// `dirty` is whatever the last sync-run left) would answer 'clean' and spawn
+// nothing — the exact "button press changes nothing" shipped once.
+state.lock = true
+now += 60_000
+check('a forced rebuild skips the clean gate', (await sync.rebuild('C:/y')) === 'started')
+check('and it spawned graft\'s sync-run for that root', spawned.some((a) => a[1][1] === 'C:/y'), JSON.stringify(spawned.at(-1)))
+check('it set syncing so the chip can show it', state.stats.syncing === true)
+
 console.log('\n--- mid-turn rebuild: a long turn must not sit on a stale graph ---')
 // The turn boundary alone left a graph dirty for 36 minutes of one agentic
 // turn while the model kept querying it. A write now also arms a debounce.
@@ -107,6 +118,11 @@ check('a second write replaces the timer, not adds one', pendingTimers.size === 
 const fire = [...pendingTimers.values()][0]
 pendingTimers.clear()
 await fire()
+// The timer callback fires syncIfDirty without awaiting it (fire-and-forget
+// by design — a throw inside a timer must never surface), so flush before
+// asserting the spawn landed. This needed one more hop once syncIfDirty
+// started delegating to rebuild().
+await new Promise((resolve) => setTimeout(resolve, 0))
 check('the quiet period rebuilds without waiting for the turn', fired.length === 1, String(fired.length))
 
 const off = createAutoSync({ graft: { state, syncRun: 'x' }, now: () => now, spawn: () => ({ on() {}, unref() {} }), debounceMs: 0, setTimeout: () => { throw new Error('should not arm') } })

@@ -209,6 +209,30 @@ export function createAutoSync(deps = {}) {
       }
       if (stats?.dirty !== true && !pending.has(root)) return 'clean'
 
+      return api.rebuild(root)
+    },
+
+    /**
+     * Rebuild one repo NOW, whether or not it looks dirty.
+     *
+     * The popup's Build button lands here, not in syncIfDirty: its gate reads
+     * graft's `dirty` flag, and a repo rebuilt by a plain `graft build` — which
+     * never patches stats.json — can read clean while being stale, answering
+     * 'clean' and spawning nothing. A pressed button that changes nothing is
+     * the failure this exists to prevent. The lock and the interval floor
+     * still apply: forced means "skip the dirt check", not "race a running
+     * build".
+     *
+     * @returns why it did or did not run, for the harness and the log.
+     */
+    rebuild: async (root) => {
+      if (typeof root !== 'string' || root === '') return 'no-root'
+      const g = await graft()
+      if (g === null) return 'graft-unavailable'
+
+      const since = now() - (lastRun.get(root) ?? -Infinity)
+      if (since < minIntervalMs) return 'too-soon'
+
       // The lock is graft's, so a rebuild already running — started here, or by
       // Claude Code in the same repo — is left alone rather than raced.
       try {

@@ -258,40 +258,54 @@ window.__ModuleLoader__.load({
      * under them as supporting detail.
      */
     function StatusCard(props) {
-      const { status, runBuild, onRebuilt } = props;
+      const { status, runBuild, onSynced } = props;
       const [building, setBuilding] = React.useState(false);
       const [buildError, setBuildError] = React.useState(null);
 
-      // The popup's Build button: the same plain offline `graft build` the
-      // bare /graft runs, for this session's repo. Disabled with a
-      // "Building…" label while it runs; on landing, the seat re-reads status
-      // so the card shows the fresh counts instead of the pre-build ones.
+      // The popup's Build button runs the same rebuild the automatic hooks
+      // run, for this session's repo. It holds Building… until OBSERVED
+      // freshness flips to synced — not until the build call lands, which
+      // only means "started". A bare `graft build` was tried here first and
+      // shipped as a press that changed nothing: the child exited while
+      // stats.json still read dirty, the button re-enabled against a pill
+      // that still said STALE, and the pill only moved when some later
+      // rebuild rewrote stats. A timed-out wait re-enables with the last
+      // error rather than holding Building… forever.
       const build = React.useCallback(() => {
         if (building || typeof runBuild !== "function") return;
         setBuilding(true);
         setBuildError(null);
+        const finish = (ok, reason) => {
+          setBuilding(false);
+          if (!ok) setBuildError(String(reason || "unknown reason"));
+        };
         Promise.resolve(runBuild()).then(
           (answer) => {
-            setBuilding(false);
-            let next;
+            let started;
             try {
-              next = unwrap(answer);
+              started = unwrap(answer);
             } catch (error) {
-              setBuildError(String(error?.message ?? error));
+              finish(false, String(error?.message ?? error));
               return;
             }
-            if (next && next.ok === true) {
-              if (typeof onRebuilt === "function") onRebuilt();
+            if (!started || started.ok !== true) {
+              finish(false, String((started && started.reason) || "unknown reason"));
+              return;
+            }
+            if (typeof onSynced === "function") {
+              Promise.resolve(onSynced()).then(
+                (synced) => finish(synced === true, synced === true ? null : "the rebuild did not report in sync — try again"),
+                (error) => finish(false, String(error?.message ?? error)),
+              );
             } else {
-              setBuildError(String((next && next.reason) || "unknown reason"));
+              finish(true);
             }
           },
           (error) => {
-            setBuilding(false);
-            setBuildError(String(error?.message ?? error));
+            finish(false, String(error?.message ?? error));
           },
         );
-      }, [building, runBuild, onRebuilt]);
+      }, [building, runBuild, onSynced]);
 
       // One pair, rendered in both pill-carrying heads: pill and button
       // grouped at the header's right, travelling together.
@@ -453,6 +467,15 @@ window.__ModuleLoader__.load({
     }
 
     const FRESH_MARK = { synced: "✓ synced", stale: "▲ stale", syncing: "◐ syncing", unknown: "○ unknown" };
+
+    /**
+     * How long the Build button waits for observed sync before giving up.
+     *
+     * Two minutes of 2s polls: a structural rebuild of a normal repo takes
+     * about a second, a large one can take minutes, and a wedged one must not
+     * hold Building… forever.
+     */
+    const SYNC_WAIT_MS = 120000;
 
     /** ⟳ — the one control adopted from the sidebar's own tab headers. */
     function RefreshIcon() {
@@ -777,19 +800,37 @@ window.__ModuleLoader__.load({
         }, [sessionId]);
 
         // Re-read status on demand — after the popup's Build lands — rather
-        // than waiting out the poll. Shared with the interval's pull above.
+        // than waiting out the poll. Returns the observed freshness, so a
+        // waiter can hold until the rebuild is VISIBLE, not just started.
         const repull = React.useCallback(() => {
           const service = ctx.get("remote.graftStatus");
-          if (service === undefined || service === null) return;
-          Promise.resolve(service.status(sessionId)).then(
+          if (service === undefined || service === null) return Promise.resolve(null);
+          return Promise.resolve(service.status(sessionId)).then(
             (answer) => {
               const next = unwrap(answer);
               setStatus(next);
               pulseCheck(next);
+              return next !== null && next.ok === true ? next.freshness ?? "unknown" : null;
             },
-            () => {},
+            () => null,
           );
         }, [sessionId, pulseCheck]);
+
+        // Hold until a re-read OBSERVES `synced`, not until the build call
+        // lands: the rebuild runs detached, so "started" says nothing about
+        // what stats.json reads yet. Bounded — two minutes of 2s polls — so a
+        // wedged rebuild re-enables the button with the last error rather
+        // than holding Building… forever.
+        const waitForSynced = React.useCallback(() => {
+          const started = Date.now();
+          const look = () =>
+            Promise.resolve(repull()).then((freshness) => {
+              if (freshness === "synced") return true;
+              if (Date.now() - started > SYNC_WAIT_MS) return false;
+              return new Promise((resolve) => window.setTimeout(() => resolve(look().then(resolve)), 2000));
+            });
+          return look();
+        }, [repull]);
 
         const openViz = React.useCallback(() => {
           const repo = basename((status && status.root) || "");
@@ -950,9 +991,10 @@ window.__ModuleLoader__.load({
             ? h(StatusCard, {
                 status,
                 runBuild,
-                // After a popup build lands the card shows the fresh graph,
-                // not the pre-build counts, without waiting out the poll.
-                onRebuilt: repull,
+                // The button holds Building… until this OBSERVES synced, so
+                // the pill flips first and the button follows — never the
+                // other way round.
+                onSynced: waitForSynced,
               })
             : null,
           h(
